@@ -353,13 +353,48 @@ if sap_file and infor_files:
                         if sel and set(sel) != set(uniq_vals(final_df, col)):
                             df_view = df_view[df_view[col].astype(str).isin(sel)]
 
-                    # ===== Preview (filtered) =====
+                    # ===== Mode Tampilan =====
+                    mode = st.radio("Mode tampilan data", ["Semua Kolom", "Analisis LPD", "Analisis FPD PSDD"], horizontal=True)
+
+                    # Helper: subset existing columns only
+                    def subset(df, cols):
+                        existing = [c for c in cols if c in df.columns]
+                        missing = [c for c in cols if c not in df.columns]
+                        if missing:
+                            st.caption(f"Kolom tidak ditemukan & di-skip: {missing}")
+                        if not existing:
+                            st.warning("Tidak ada kolom yang cocok untuk mode ini.")
+                            return pd.DataFrame()
+                        return df[existing]
+
+                    # ===== Preview sesuai mode =====
                     st.subheader("🔎 Preview Hasil (After Filters)")
-                    st.dataframe(df_view.head(100), use_container_width=True)
+                    if mode == "Semua Kolom":
+                        st.dataframe(df_view.head(100), use_container_width=True)
+                    elif mode == "Analisis LPD":
+                        cols_lpd = [
+                            "PO No.(Full)", "Order Status Infor", "DRC",
+                            "Delay/Early - Confirmation PD", "Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD",
+                            "Result_Delay_CRD", "Delay - PO PSDD Update", "Infor Delay - PO PSDD Update",
+                            "Result_Delay_PSDD", "Delay - PO PD Update",
+                            "LPD", "Infor LPD", "Result_LPD",
+                            "PODD", "Infor PODD", "Result_PODD"
+                        ]
+                        st.dataframe(subset(df_view, cols_lpd).head(2000), use_container_width=True)
+                    elif mode == "Analisis FPD PSDD":
+                        cols_fpd_psdd = [
+                            "PO No.(Full)", "Order Status Infor", "DRC",
+                            "Delay/Early - Confirmation PD", "Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD",
+                            "Result_Delay_CRD", "Delay - PO PSDD Update", "Infor Delay - PO PSDD Update",
+                            "Result_Delay_PSDD", "Delay - PO PD Update",
+                            "FPD", "Infor FPD", "Result_FPD",
+                            "PSDD", "Infor PSDD", "Result_PSDD"
+                        ]
+                        st.dataframe(subset(df_view, cols_fpd_psdd).head(2000), use_container_width=True)
 
                     # ===== Sample merge check (filtered) =====
                     merge_cols = [c for c in ["PO No.(Full)", "Quantity", "Infor Quantity"] if c in df_view.columns]
-                    if merge_cols:
+                    if merge_cols and mode == "Semua Kolom":
                         st.markdown("**Sample cek hasil merge (PO & Quantity)**")
                         st.dataframe(df_view[merge_cols].head(10), use_container_width=True)
 
@@ -440,10 +475,5 @@ with st.expander("🛠 Debug Info"):
         st.write("Pandas version:", pd.__version__)
         import numpy
         st.write("NumPy version:", numpy.__version__)
-        try:
-            import matplotlib
-            st.write("Matplotlib version:", matplotlib.__version__)
-        except Exception:
-            st.write("Matplotlib: not available")
     except Exception as e:
         st.write("Failed to show debug info:", e)
