@@ -1,7 +1,7 @@
 
 import io
-from datetime import datetime
-from zoneinfo import ZoneInfo
+import sys
+from datetime import datetime, timedelta
 
 import numpy as np
 import pandas as pd
@@ -12,13 +12,17 @@ st.set_page_config(page_title="PGD Comparison Tracking", layout="wide")
 st.title("📦 PGD Comparison Tracking — SAP vs Infor")
 st.caption("Upload 1 SAP Excel file (.xlsx) dan satu atau lebih Infor CSV (.csv). Aplikasi akan merge, cleaning, comparison, visualisasi, filter, dan unduhan laporan.")
 
-# ================== Utils ==================
+# ================== Helpers ==================
+def today_str_id():
+    """Return current date string in Asia/Jakarta (UTC+7) as YYYYMMDD without requiring zoneinfo/pytz."""
+    return (datetime.utcnow() + timedelta(hours=7)).strftime("%Y%m%d")
+
 @st.cache_data(show_spinner=False)
-def read_excel_file(file) -> pd.DataFrame:
+def read_excel_file(file):
     return pd.read_excel(file, engine="openpyxl")
 
 @st.cache_data(show_spinner=False)
-def read_csv_file(file) -> pd.DataFrame:
+def read_csv_file(file):
     # best-effort encoding
     for enc in ("utf-8", "utf-8-sig", "latin1"):
         try:
@@ -29,7 +33,7 @@ def read_csv_file(file) -> pd.DataFrame:
     file.seek(0)
     return pd.read_csv(file)
 
-def convert_date_columns(df: pd.DataFrame) -> pd.DataFrame:
+def convert_date_columns(df):
     date_cols = [
         'Document Date', 'FPD', 'LPD', 'CRD', 'PSDD', 'FCR Date', 'PODD', 'PD', 'PO Date', 'Actual PGI',
         'Infor CRD', 'Infor PD', 'Infor PSDD', 'Infor FPD', 'Infor LPD', 'Infor PODD'
@@ -39,7 +43,7 @@ def convert_date_columns(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = pd.to_datetime(df[col], errors='coerce')
     return df
 
-def load_sap(sap_df: pd.DataFrame) -> pd.DataFrame:
+def load_sap(sap_df):
     df = sap_df.copy()
     if "Quanity" in df.columns and "Quantity" not in df.columns:
         df.rename(columns={'Quanity': 'Quantity'}, inplace=True)
@@ -48,7 +52,7 @@ def load_sap(sap_df: pd.DataFrame) -> pd.DataFrame:
     df = convert_date_columns(df)
     return df
 
-def load_infor_from_many_csv(csv_dfs: list[pd.DataFrame]) -> pd.DataFrame:
+def load_infor_from_many_csv(csv_dfs):
     data_list = []
     required_cols = [
         'PO Statistical Delivery Date (PSDD)',
@@ -69,7 +73,7 @@ def load_infor_from_many_csv(csv_dfs: list[pd.DataFrame]) -> pd.DataFrame:
     df_all = pd.concat(data_list, ignore_index=True)
     return df_all
 
-def process_infor(df_all: pd.DataFrame) -> pd.DataFrame:
+def process_infor(df_all):
     selected_columns = [
         'Order #', 'Order Status', 'Model Name', 'Article Number', 'Gps Customer Number',
         'Country/Region', 'Customer Request Date (CRD)', 'Plan Date', 'PO Statistical Delivery Date (PSDD)',
@@ -126,7 +130,7 @@ def process_infor(df_all: pd.DataFrame) -> pd.DataFrame:
     st.info(f"Jumlah baris setelah proses Infor: {len(df_infor)}")
     return df_infor
 
-def merge_sap_infor(df_sap: pd.DataFrame, df_infor: pd.DataFrame) -> pd.DataFrame:
+def merge_sap_infor(df_sap, df_infor):
     df_sap = df_sap.copy()
     df_infor = df_infor.copy()
 
@@ -143,7 +147,7 @@ def merge_sap_infor(df_sap: pd.DataFrame, df_infor: pd.DataFrame) -> pd.DataFram
     )
     return df_merged
 
-def fill_missing_dates(df: pd.DataFrame) -> pd.DataFrame:
+def fill_missing_dates(df):
     df = df.copy()
     df['Order Status Infor'] = df.get('Order Status Infor', pd.Series(dtype=str)).astype(str).str.strip().str.upper()
     for col in ['LPD', 'FPD', 'CRD', 'PD', 'PSDD', 'PODD']:
@@ -161,7 +165,7 @@ def fill_missing_dates(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
-def clean_and_compare(df_merged: pd.DataFrame) -> pd.DataFrame:
+def clean_and_compare(df_merged):
     df_merged = df_merged.copy()
 
     # Step 1: numerik
@@ -261,12 +265,12 @@ DESIRED_ORDER = [
     'PO Date', 'Actual PGI', 'Segment', 'S&P LPD', 'Currency'
 ]
 
-def reorder_columns(df: pd.DataFrame, desired_order: list[str]) -> pd.DataFrame:
+def reorder_columns(df, desired_order):
     existing_cols = [col for col in desired_order if col in df.columns]
     tail_cols = [c for c in df.columns if c not in existing_cols]
     return df[existing_cols + tail_cols]
 
-def build_report(df_sap: pd.DataFrame, df_infor_raw: pd.DataFrame) -> pd.DataFrame:
+def build_report(df_sap, df_infor_raw):
     df_infor = process_infor(df_infor_raw)
     if df_infor.empty:
         return pd.DataFrame()
@@ -295,155 +299,162 @@ with st.sidebar:
 # ================== Main ==================
 if sap_file and infor_files:
     with st.status("Membaca & menggabungkan file...", expanded=True) as status:
-        sap_df = read_excel_file(sap_file)
-        st.write("SAP dibaca:", sap_df.shape)
+        try:
+            sap_df = read_excel_file(sap_file)
+            st.write("SAP dibaca:", sap_df.shape)
 
-        infor_csv_dfs = [read_csv_file(f) for f in infor_files]
-        infor_all = load_infor_from_many_csv(infor_csv_dfs)
-        st.write("Total Infor (gabungan CSV):", infor_all.shape)
+            infor_csv_dfs = [read_csv_file(f) for f in infor_files]
+            infor_all = load_infor_from_many_csv(infor_csv_dfs)
+            st.write("Total Infor (gabungan CSV):", infor_all.shape)
 
-        if infor_all.empty:
-            status.update(label="Gagal: tidak ada CSV Infor yang valid.", state="error")
-        else:
-            status.update(label="Sukses membaca semua file. Lanjut proses...", state="running")
-            final_df = build_report(sap_df, infor_all)
-
-            if final_df.empty:
-                status.update(label="Gagal membuat report — periksa kolom wajib.", state="error")
+            if infor_all.empty:
+                status.update(label="Gagal: tidak ada CSV Infor yang valid.", state="error")
             else:
-                status.update(label="Report siap! ✅", state="complete")
+                status.update(label="Sukses membaca semua file. Lanjut proses...", state="running")
+                final_df = build_report(sap_df, infor_all)
 
-                # ======== Sidebar Filters ========
-                with st.sidebar:
-                    st.header("🔎 Filters")
-
-                    # Helper to get unique values safely
-                    def uniq_vals(df, col):
-                        if col in df.columns:
-                            return sorted([str(x) for x in df[col].dropna().unique().tolist()])
-                        return []
-
-                    # Order Status Infor
-                    status_opts = uniq_vals(final_df, "Order Status Infor")
-                    selected_status = st.multiselect("Order Status Infor", options=status_opts, default=status_opts)
-
-                    # PO No.(Full) (no default to avoid giant selection on big data)
-                    po_opts = uniq_vals(final_df, "PO No.(Full)")
-                    selected_pos = st.multiselect("PO No.(Full)", options=po_opts, placeholder="Pilih satu/lebih PO (opsional)")
-
-                    # Result columns
-                    result_cols = [
-                        "Result_Quantity", "Result_FPD", "Result_LPD",
-                        "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"
-                    ]
-                    result_selections = {}
-                    for col in result_cols:
-                        opts = uniq_vals(final_df, col)
-                        if opts:
-                            # default = semua nilai agar tidak mem-filter saat awal
-                            result_selections[col] = st.multiselect(col, options=opts, default=opts)
-
-                # ===== Apply Filters =====
-                df_view = final_df.copy()
-                # Order Status
-                if selected_status:
-                    df_view = df_view[df_view["Order Status Infor"].astype(str).isin(selected_status)]
-                # PO No.(Full)
-                if selected_pos:
-                    df_view = df_view[df_view["PO No.(Full)"].astype(str).isin(selected_pos)]
-                # Result_* columns
-                for col, sel in result_selections.items():
-                    # apply only if user changed from "all"
-                    if sel and set(sel) != set(uniq_vals(final_df, col)):
-                        df_view = df_view[df_view[col].astype(str).isin(sel)]
-
-                # ===== Preview (filtered) =====
-                st.subheader("🔎 Preview Hasil (After Filters)")
-                st.dataframe(df_view.head(100), use_container_width=True)
-
-                # ===== Sample merge check (filtered) =====
-                merge_cols = [c for c in ["PO No.(Full)", "Quantity", "Infor Quantity"] if c in df_view.columns]
-                if merge_cols:
-                    st.markdown("**Sample cek hasil merge (PO & Quantity)**")
-                    st.dataframe(df_view[merge_cols].head(10), use_container_width=True)
-
-                # ===== Visualization: TRUE/FALSE counts (filtered) =====
-                st.subheader("📊 Comparison Summary (TRUE vs FALSE)")
-                existing_results = [c for c in ["Result_Quantity", "Result_FPD", "Result_LPD", "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"] if c in df_view.columns]
-                if existing_results:
-                    true_counts = [int(df_view[c].eq("TRUE").sum()) for c in existing_results]
-                    false_counts = [int(df_view[c].eq("FALSE").sum()) for c in existing_results]
-                    total_counts = [int(df_view[c].isin(["TRUE","FALSE"]).sum()) for c in existing_results]
-                    accuracy = [(t / tot * 100.0) if tot > 0 else 0.0 for t, tot in zip(true_counts, total_counts)]
-
-                    summary_df = pd.DataFrame({
-                        "Metric": existing_results,
-                        "TRUE": true_counts,
-                        "FALSE": false_counts,
-                        "Total (TRUE+FALSE)": total_counts,
-                        "TRUE %": [round(a, 2) for a in accuracy],
-                    })
-
-                    st.dataframe(summary_df, use_container_width=True)
-
-                    # Bar chart
-                    chart_df = summary_df.set_index("Metric")[["TRUE", "FALSE"]]
-                    st.bar_chart(chart_df)
-
-                    # Pie chart for FALSE distribution
-                    st.markdown("**Distribusi FALSE per metric (chart lingkaran)**")
-                    try:
-                        import matplotlib.pyplot as plt
-                        fig, ax = plt.subplots()
-                        if sum(false_counts) > 0:
-                            ax.pie(
-                                false_counts,
-                                labels=existing_results,
-                                autopct=lambda p: f"{int(round(p*sum(false_counts)/100.0))} ({p:.1f}%)",
-                                startangle=90
-                            )
-                            ax.axis("equal")
-                            st.pyplot(fig, use_container_width=True)
-                        else:
-                            st.info("Tidak ada nilai FALSE pada metric yang dipilih.")
-                    except Exception as e:
-                        st.warning(f"Gagal menampilkan pie chart: {e}")
-
-                    # FALSE counts table only
-                    st.markdown("**Ringkasan jumlah FALSE per metric**")
-                    false_df = pd.DataFrame({
-                        "Metric": existing_results,
-                        "FALSE": false_counts
-                    })
-                    st.dataframe(false_df, use_container_width=True)
+                if final_df.empty:
+                    status.update(label="Gagal membuat report — periksa kolom wajib.", state="error")
                 else:
-                    st.info("Kolom hasil perbandingan (Result_*) belum tersedia di data final.")
+                    status.update(label="Report siap! ✅", state="complete")
 
-                # ===== Downloads (filtered) =====
-                today_str = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y%m%d")
-                out_name_xlsx = f"PGD Comparison Tracking Report - {today_str}.xlsx"
-                out_name_csv = f"PGD Comparison Tracking Report - {today_str}.csv"
+                    # ======== Sidebar Filters ========
+                    with st.sidebar:
+                        st.header("🔎 Filters")
 
-                # Excel buffer of filtered data
-                towrite = io.BytesIO()
-                with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
-                    df_view.to_excel(writer, index=False, sheet_name="Report")
-                towrite.seek(0)
+                        def uniq_vals(df, col):
+                            if col in df.columns:
+                                return sorted([str(x) for x in df[col].dropna().unique().tolist()])
+                            return []
 
-                st.download_button(
-                    label="⬇️ Download Excel (Filtered)",
-                    data=towrite,
-                    file_name=out_name_xlsx,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
-                )
+                        status_opts = uniq_vals(final_df, "Order Status Infor")
+                        selected_status = st.multiselect("Order Status Infor", options=status_opts, default=status_opts)
 
-                st.download_button(
-                    label="⬇️ Download CSV (Filtered)",
-                    data=df_view.to_csv(index=False).encode("utf-8"),
-                    file_name=out_name_csv,
-                    mime="text/csv",
-                    use_container_width=True
-                )
-else:
-    st.info("Unggah 1 file SAP (.xlsx) dan satu atau lebih file Infor (.csv) di sidebar untuk mulai memproses.")
+                        po_opts = uniq_vals(final_df, "PO No.(Full)")
+                        selected_pos = st.multiselect("PO No.(Full)", options=po_opts, placeholder="Pilih satu/lebih PO (opsional)")
+
+                        result_cols = [
+                            "Result_Quantity", "Result_FPD", "Result_LPD",
+                            "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"
+                        ]
+                        result_selections = {}
+                        for col in result_cols:
+                            opts = uniq_vals(final_df, col)
+                            if opts:
+                                result_selections[col] = st.multiselect(col, options=opts, default=opts)
+
+                    # ===== Apply Filters =====
+                    df_view = final_df.copy()
+                    if selected_status:
+                        df_view = df_view[df_view["Order Status Infor"].astype(str).isin(selected_status)]
+                    if selected_pos:
+                        df_view = df_view[df_view["PO No.(Full)"].astype(str).isin(selected_pos)]
+                    for col, sel in result_selections.items():
+                        if sel and set(sel) != set(uniq_vals(final_df, col)):
+                            df_view = df_view[df_view[col].astype(str).isin(sel)]
+
+                    # ===== Preview (filtered) =====
+                    st.subheader("🔎 Preview Hasil (After Filters)")
+                    st.dataframe(df_view.head(100), use_container_width=True)
+
+                    # ===== Sample merge check (filtered) =====
+                    merge_cols = [c for c in ["PO No.(Full)", "Quantity", "Infor Quantity"] if c in df_view.columns]
+                    if merge_cols:
+                        st.markdown("**Sample cek hasil merge (PO & Quantity)**")
+                        st.dataframe(df_view[merge_cols].head(10), use_container_width=True)
+
+                    # ===== Visualization: TRUE/FALSE counts (filtered) =====
+                    st.subheader("📊 Comparison Summary (TRUE vs FALSE)")
+                    existing_results = [c for c in ["Result_Quantity", "Result_FPD", "Result_LPD", "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"] if c in df_view.columns]
+                    if existing_results:
+                        true_counts = [int(df_view[c].eq("TRUE").sum()) for c in existing_results]
+                        false_counts = [int(df_view[c].eq("FALSE").sum()) for c in existing_results]
+                        total_counts = [int(df_view[c].isin(["TRUE","FALSE"]).sum()) for c in existing_results]
+                        accuracy = [(t / tot * 100.0) if tot > 0 else 0.0 for t, tot in zip(true_counts, total_counts)]
+
+                        summary_df = pd.DataFrame({
+                            "Metric": existing_results,
+                            "TRUE": true_counts,
+                            "FALSE": false_counts,
+                            "Total (TRUE+FALSE)": total_counts,
+                            "TRUE %": [round(a, 2) for a in accuracy],
+                        })
+
+                        st.dataframe(summary_df, use_container_width=True)
+
+                        chart_df = summary_df.set_index("Metric")[["TRUE", "FALSE"]]
+                        st.bar_chart(chart_df)
+
+                        st.markdown("**Distribusi FALSE per metric (chart lingkaran)**")
+                        try:
+                            import matplotlib.pyplot as plt
+                            fig, ax = plt.subplots()
+                            if sum(false_counts) > 0:
+                                ax.pie(
+                                    false_counts,
+                                    labels=existing_results,
+                                    autopct=lambda p: f"{int(round(p*sum(false_counts)/100.0))} ({p:.1f}%)",
+                                    startangle=90
+                                )
+                                ax.axis("equal")
+                                st.pyplot(fig, use_container_width=True)
+                            else:
+                                st.info("Tidak ada nilai FALSE pada metric yang dipilih.")
+                        except Exception as e:
+                            st.warning(f"Gagal menampilkan pie chart: {e}")
+
+                        st.markdown("**Ringkasan jumlah FALSE per metric**")
+                        false_df = pd.DataFrame({
+                            "Metric": existing_results,
+                            "FALSE": false_counts
+                        })
+                        st.dataframe(false_df, use_container_width=True)
+                    else:
+                        st.info("Kolom hasil perbandingan (Result_*) belum tersedia di data final.")
+
+                    # ===== Downloads (filtered) =====
+                    out_name_xlsx = f"PGD Comparison Tracking Report - {today_str_id()}.xlsx"
+                    out_name_csv = f"PGD Comparison Tracking Report - {today_str_id()}.csv"
+
+                    towrite = io.BytesIO()
+                    with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
+                        df_view.to_excel(writer, index=False, sheet_name="Report")
+                    towrite.seek(0)
+
+                    st.download_button(
+                        label="⬇️ Download Excel (Filtered)",
+                        data=towrite,
+                        file_name=out_name_xlsx,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+
+                    st.download_button(
+                        label="⬇️ Download CSV (Filtered)",
+                        data=df_view.to_csv(index=False).encode("utf-8"),
+                        file_name=out_name_csv,
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+        except Exception as e:
+            status.update(label="Terjadi error saat menjalankan aplikasi.", state="error")
+            st.error("Terjadi error saat menjalankan proses. Lihat detail di bawah ini:")
+            st.exception(e)
+
+# ================== Debug Info ==================
+with st.expander("🛠 Debug Info"):
+    try:
+        import platform
+        st.write("Python:", sys.version)
+        st.write("Platform:", platform.platform())
+        st.write("Streamlit version:", st.__version__)
+        st.write("Pandas version:", pd.__version__)
+        import numpy
+        st.write("NumPy version:", numpy.__version__)
+        try:
+            import matplotlib
+            st.write("Matplotlib version:", matplotlib.__version__)
+        except Exception:
+            st.write("Matplotlib: not available")
+    except Exception as e:
+        st.write("Failed to show debug info:", e)
