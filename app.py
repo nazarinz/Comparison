@@ -320,16 +320,74 @@ if sap_file and infor_files:
 
                 st.subheader("🔎 Preview Hasil")
                 st.dataframe(final_df.head(100), use_container_width=True)
+                # Visualization of comparison insights
+                import plotly.express as px
 
-                # Sample merge check
-                merge_cols = [c for c in ["PO No.(Full)", "Quantity", "Infor Quantity"] if c in final_df.columns]
-                if merge_cols:
-                    st.markdown("**Sample cek hasil merge (PO & Quantity)**")
-                    st.dataframe(final_df[merge_cols].head(10), use_container_width=True)
+                result_cols = ["Result_Quantity", "Result_FPD", "Result_LPD", "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"]
+                available_result_cols = [c for c in result_cols if c in final_df.columns]
+                if available_result_cols:
+                    st.markdown("### 📊 Comparison Results Summary")
+                    counts_df = pd.DataFrame({
+                        "Result": [],
+                        "Count": [],
+                        "Category": []
+                    })
+                    for col in available_result_cols:
+                        vc = final_df[col].value_counts(dropna=False).reset_index()
+                        vc.columns = ["Result", "Count"]
+                        vc["Category"] = col
+                        counts_df = pd.concat([counts_df, vc], ignore_index=True)
+                    
+                    fig = px.bar(counts_df, x="Category", y="Count", color="Result", barmode="group",
+                                 title="Counts of TRUE/FALSE per Result_* Column",
+                                 text="Count")
+                    fig.update_layout(xaxis_title="Result Column", yaxis_title="Count", legend_title="Result")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No Result_* columns available for visualization.")
+
+
+                # ================= Visualization: Comparison Summary =================
+                st.subheader("📊 Comparison Summary (TRUE vs FALSE)")
+                result_cols = [
+                    "Result_Quantity", "Result_FPD", "Result_LPD",
+                    "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"
+                ]
+                existing_results = [c for c in result_cols if c in final_df.columns]
+
+                if existing_results:
+                    # Build counts table
+                    true_counts = [int(final_df[c].eq("TRUE").sum()) for c in existing_results]
+                    false_counts = [int(final_df[c].eq("FALSE").sum()) for c in existing_results]
+                    total_counts = [int(final_df[c].isin(["TRUE","FALSE"]).sum()) for c in existing_results]
+                    accuracy = [ (t / tot * 100.0) if tot > 0 else 0.0 for t, tot in zip(true_counts, total_counts) ]
+
+                    summary_df = pd.DataFrame({
+                        "Metric": existing_results,
+                        "TRUE": true_counts,
+                        "FALSE": false_counts,
+                        "Total (TRUE+FALSE)": total_counts,
+                        "TRUE %": [round(a, 2) for a in accuracy],
+                    })
+
+                    # Show table
+                    st.dataframe(summary_df, use_container_width=True)
+
+                    # Bar chart (TRUE/FALSE per metric)
+                    chart_df = summary_df.set_index("Metric")[["TRUE", "FALSE"]]
+                    st.bar_chart(chart_df)
+
+                else:
+                    st.info("Kolom hasil perbandingan (Result_*) belum tersedia di data final.")
+
+                # ================= End Visualization =================
 
                 # Download buttons
-                out_name_xlsx = "PGD_Comparison_Tracking_Report.xlsx"
-                out_name_csv = "PGD_Comparison_Tracking_Report.csv"
+                from datetime import datetime
+from zoneinfo import ZoneInfo
+today_str = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y%m%d")
+out_name_xlsx = f"PGD Comparison Tracking Report - {today_str}.xlsx"
+out_name_csv = f"PGD Comparison Tracking Report - {today_str}.csv"
 
                 # Excel to bytes
                 towrite = io.BytesIO()
