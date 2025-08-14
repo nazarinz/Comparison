@@ -1,25 +1,25 @@
 
 import io
-import os
-import glob
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-# ============ Streamlit Page Config ============
+# ================== Streamlit Config ==================
 st.set_page_config(page_title="PGD Comparison Tracking", layout="wide")
-
 st.title("📦 PGD Comparison Tracking — SAP vs Infor")
-st.caption("Upload 1 SAP Excel file (.xlsx) and one or more Infor CSV files. The app will merge, clean, compare, and let you download the report.")
+st.caption("Upload 1 SAP Excel file (.xlsx) dan satu atau lebih Infor CSV (.csv). Aplikasi akan merge, cleaning, comparison, dan sediakan unduhan laporan.")
 
-# ============ Utility ============
+# ================== Utils ==================
 @st.cache_data(show_spinner=False)
 def read_excel_file(file) -> pd.DataFrame:
     return pd.read_excel(file, engine="openpyxl")
 
 @st.cache_data(show_spinner=False)
 def read_csv_file(file) -> pd.DataFrame:
-    # try best-effort encoding
+    # best-effort encoding
     for enc in ("utf-8", "utf-8-sig", "latin1"):
         try:
             file.seek(0)
@@ -41,7 +41,6 @@ def convert_date_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def load_sap(sap_df: pd.DataFrame) -> pd.DataFrame:
     df = sap_df.copy()
-    # normalisasi kolom kuantitas & PO
     if "Quanity" in df.columns and "Quantity" not in df.columns:
         df.rename(columns={'Quanity': 'Quantity'}, inplace=True)
     if "PO No.(Full)" in df.columns:
@@ -59,10 +58,10 @@ def load_infor_from_many_csv(csv_dfs: list[pd.DataFrame]) -> pd.DataFrame:
     for i, df in enumerate(csv_dfs, start=1):
         if all(col in df.columns for col in required_cols):
             data_list.append(df)
-            st.success(f"Dibaca ✅  CSV ke-{i} (kolom wajib lengkap)")
+            st.success(f"Dibaca ✅ CSV ke-{i} (kolom wajib lengkap)")
         else:
             miss = [c for c in required_cols if c not in df.columns]
-            st.warning(f"CSV ke-{i} dilewati ⚠️  (kolom wajib hilang: {miss})")
+            st.warning(f"CSV ke-{i} dilewati ⚠️ (kolom wajib hilang: {miss})")
 
     if not data_list:
         return pd.DataFrame()
@@ -124,7 +123,6 @@ def process_infor(df_all: pd.DataFrame) -> pd.DataFrame:
         'Quantity': 'Infor Quantity'
     }
     df_infor.rename(columns=rename_cols, inplace=True)
-
     st.info(f"Jumlah baris setelah proses Infor: {len(df_infor)}")
     return df_infor
 
@@ -265,7 +263,6 @@ DESIRED_ORDER = [
 
 def reorder_columns(df: pd.DataFrame, desired_order: list[str]) -> pd.DataFrame:
     existing_cols = [col for col in desired_order if col in df.columns]
-    # Tambahkan kolom lain (yang tidak di desired_order) di belakang agar tidak hilang
     tail_cols = [c for c in df.columns if c not in existing_cols]
     return df[existing_cols + tail_cols]
 
@@ -283,21 +280,20 @@ def build_report(df_sap: pd.DataFrame, df_infor_raw: pd.DataFrame) -> pd.DataFra
     df_final = reorder_columns(df_final, DESIRED_ORDER)
     return df_final
 
-# ============ Sidebar Uploads ============
+# ================== Sidebar Uploads ==================
 with st.sidebar:
     st.header("📤 Upload Files")
     sap_file = st.file_uploader("SAP Excel (.xlsx)", type=["xlsx"])
     infor_files = st.file_uploader("Infor CSV (boleh multi-file)", type=["csv"], accept_multiple_files=True)
     st.markdown("""
-    **Tips:**
-    - Pastikan kolom kunci tersedia:
-      - SAP: `PO No.(Full)`, `Quantity`, dan kolom tanggal terkait bila ada.
-      - Infor CSV: `PO Statistical Delivery Date (PSDD)`, `Customer Request Date (CRD)`, `Line Aggregator` minimal, sisanya sesuai daftar app.
-    """)
+**Tips:**
+- Pastikan kolom kunci tersedia:
+  - SAP: `PO No.(Full)`, `Quantity`, dan kolom tanggal terkait bila ada.
+  - Infor CSV: `PO Statistical Delivery Date (PSDD)`, `Customer Request Date (CRD)`, `Line Aggregator` minimal, sisanya sesuai daftar app.
+""")
 
-# ============ Main Actions ============
+# ================== Main ==================
 if sap_file and infor_files:
-    # Load files
     with st.status("Membaca & menggabungkan file...", expanded=True) as status:
         sap_df = read_excel_file(sap_file)
         st.write("SAP dibaca:", sap_df.shape)
@@ -310,57 +306,35 @@ if sap_file and infor_files:
             status.update(label="Gagal: tidak ada CSV Infor yang valid.", state="error")
         else:
             status.update(label="Sukses membaca semua file. Lanjut proses...", state="running")
-
-            # Build final report
             final_df = build_report(sap_df, infor_all)
+
             if final_df.empty:
                 status.update(label="Gagal membuat report — periksa kolom wajib.", state="error")
             else:
                 status.update(label="Report siap! ✅", state="complete")
 
+                # ===== Preview =====
                 st.subheader("🔎 Preview Hasil")
                 st.dataframe(final_df.head(100), use_container_width=True)
-                # Visualization of comparison insights
-                import plotly.express as px
 
-                result_cols = ["Result_Quantity", "Result_FPD", "Result_LPD", "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"]
-                available_result_cols = [c for c in result_cols if c in final_df.columns]
-                if available_result_cols:
-                    st.markdown("### 📊 Comparison Results Summary")
-                    counts_df = pd.DataFrame({
-                        "Result": [],
-                        "Count": [],
-                        "Category": []
-                    })
-                    for col in available_result_cols:
-                        vc = final_df[col].value_counts(dropna=False).reset_index()
-                        vc.columns = ["Result", "Count"]
-                        vc["Category"] = col
-                        counts_df = pd.concat([counts_df, vc], ignore_index=True)
-                    
-                    fig = px.bar(counts_df, x="Category", y="Count", color="Result", barmode="group",
-                                 title="Counts of TRUE/FALSE per Result_* Column",
-                                 text="Count")
-                    fig.update_layout(xaxis_title="Result Column", yaxis_title="Count", legend_title="Result")
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("No Result_* columns available for visualization.")
+                # ===== Sample merge check =====
+                merge_cols = [c for c in ["PO No.(Full)", "Quantity", "Infor Quantity"] if c in final_df.columns]
+                if merge_cols:
+                    st.markdown("**Sample cek hasil merge (PO & Quantity)**")
+                    st.dataframe(final_df[merge_cols].head(10), use_container_width=True)
 
-
-                # ================= Visualization: Comparison Summary =================
+                # ===== Visualization: TRUE/FALSE counts =====
                 st.subheader("📊 Comparison Summary (TRUE vs FALSE)")
                 result_cols = [
                     "Result_Quantity", "Result_FPD", "Result_LPD",
                     "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"
                 ]
                 existing_results = [c for c in result_cols if c in final_df.columns]
-
                 if existing_results:
-                    # Build counts table
                     true_counts = [int(final_df[c].eq("TRUE").sum()) for c in existing_results]
                     false_counts = [int(final_df[c].eq("FALSE").sum()) for c in existing_results]
                     total_counts = [int(final_df[c].isin(["TRUE","FALSE"]).sum()) for c in existing_results]
-                    accuracy = [ (t / tot * 100.0) if tot > 0 else 0.0 for t, tot in zip(true_counts, total_counts) ]
+                    accuracy = [(t / tot * 100.0) if tot > 0 else 0.0 for t, tot in zip(true_counts, total_counts)]
 
                     summary_df = pd.DataFrame({
                         "Metric": existing_results,
@@ -370,26 +344,19 @@ if sap_file and infor_files:
                         "TRUE %": [round(a, 2) for a in accuracy],
                     })
 
-                    # Show table
                     st.dataframe(summary_df, use_container_width=True)
 
-                    # Bar chart (TRUE/FALSE per metric)
                     chart_df = summary_df.set_index("Metric")[["TRUE", "FALSE"]]
                     st.bar_chart(chart_df)
-
                 else:
                     st.info("Kolom hasil perbandingan (Result_*) belum tersedia di data final.")
 
-                # ================= End Visualization =================
+                # ===== Downloads =====
+                today_str = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y%m%d")
+                out_name_xlsx = f"PGD Comparison Tracking Report - {today_str}.xlsx"
+                out_name_csv = f"PGD Comparison Tracking Report - {today_str}.csv"
 
-                # Download buttons
-                from datetime import datetime
-from zoneinfo import ZoneInfo
-today_str = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y%m%d")
-out_name_xlsx = f"PGD Comparison Tracking Report - {today_str}.xlsx"
-out_name_csv = f"PGD Comparison Tracking Report - {today_str}.csv"
-
-                # Excel to bytes
+                # Excel buffer
                 towrite = io.BytesIO()
                 with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
                     final_df.to_excel(writer, index=False, sheet_name="Report")
@@ -410,6 +377,5 @@ out_name_csv = f"PGD Comparison Tracking Report - {today_str}.csv"
                     mime="text/csv",
                     use_container_width=True
                 )
-
 else:
     st.info("Unggah 1 file SAP (.xlsx) dan satu atau lebih file Infor (.csv) di sidebar untuk mulai memproses.")
