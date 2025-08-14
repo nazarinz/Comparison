@@ -10,7 +10,7 @@ import streamlit as st
 # ================== Streamlit Config ==================
 st.set_page_config(page_title="PGD Comparison Tracking", layout="wide")
 st.title("📦 PGD Comparison Tracking — SAP vs Infor")
-st.caption("Upload 1 SAP Excel file (.xlsx) dan satu atau lebih Infor CSV (.csv). Aplikasi akan merge, cleaning, comparison, dan sediakan unduhan laporan.")
+st.caption("Upload 1 SAP Excel file (.xlsx) dan satu atau lebih Infor CSV (.csv). Aplikasi akan merge, cleaning, comparison, visualisasi, dan sediakan unduhan laporan.")
 
 # ================== Utils ==================
 @st.cache_data(show_spinner=False)
@@ -346,8 +346,36 @@ if sap_file and infor_files:
 
                     st.dataframe(summary_df, use_container_width=True)
 
+                    # Bar chart
                     chart_df = summary_df.set_index("Metric")[["TRUE", "FALSE"]]
                     st.bar_chart(chart_df)
+
+                    # Pie chart for FALSE distribution
+                    st.markdown("**Distribusi FALSE per metric (chart lingkaran)**")
+                    try:
+                        import matplotlib.pyplot as plt
+                        fig, ax = plt.subplots()
+                        if sum(false_counts) > 0:
+                            ax.pie(
+                                false_counts,
+                                labels=existing_results,
+                                autopct=lambda p: f"{int(round(p*sum(false_counts)/100.0))} ({p:.1f}%)",
+                                startangle=90
+                            )
+                            ax.axis("equal")
+                            st.pyplot(fig, use_container_width=True)
+                        else:
+                            st.info("Tidak ada nilai FALSE pada metric yang dipilih.")
+                    except Exception as e:
+                        st.warning(f"Gagal menampilkan pie chart: {e}")
+
+                    # FALSE counts table only
+                    st.markdown("**Ringkasan jumlah FALSE per metric**")
+                    false_df = pd.DataFrame({
+                        "Metric": existing_results,
+                        "FALSE": false_counts
+                    })
+                    st.dataframe(false_df, use_container_width=True)
                 else:
                     st.info("Kolom hasil perbandingan (Result_*) belum tersedia di data final.")
 
