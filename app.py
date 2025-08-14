@@ -10,7 +10,7 @@ import streamlit as st
 # ================== Streamlit Config ==================
 st.set_page_config(page_title="PGD Comparison Tracking", layout="wide")
 st.title("📦 PGD Comparison Tracking — SAP vs Infor")
-st.caption("Upload 1 SAP Excel file (.xlsx) dan satu atau lebih Infor CSV (.csv). Aplikasi akan merge, cleaning, comparison, visualisasi, filter, dan unduhan laporan.")
+st.caption("Upload 1 SAP Excel file (.xlsx) dan satu atau lebih Infor CSV (.csv). Aplikasi akan merge, cleaning, comparison, visualisasi, filter (dengan tombol Execute), dan unduhan laporan.")
 
 # ================== Helpers ==================
 def today_str_id():
@@ -284,7 +284,7 @@ def build_report(df_sap, df_infor_raw):
     df_final = reorder_columns(df_final, DESIRED_ORDER)
     return df_final
 
-# ================== Sidebar Uploads ==================
+# ================== Sidebar: Upload & Filter Form ==================
 with st.sidebar:
     st.header("📤 Upload Files")
     sap_file = st.file_uploader("SAP Excel (.xlsx)", type=["xlsx"])
@@ -318,10 +318,9 @@ if sap_file and infor_files:
                 else:
                     status.update(label="Report siap! ✅", state="complete")
 
-                    # ======== Sidebar Filters ========
-                    with st.sidebar:
-                        st.header("🔎 Filters")
-
+                    # ======== Sidebar Form (Filters + Mode + Execute) ========
+                    with st.sidebar.form("filters_form"):
+                        st.header("🔎 Filters & Mode")
                         def uniq_vals(df, col):
                             if col in df.columns:
                                 return sorted([str(x) for x in df[col].dropna().unique().tolist()])
@@ -343,123 +342,134 @@ if sap_file and infor_files:
                             if opts:
                                 result_selections[col] = st.multiselect(col, options=opts, default=opts)
 
-                    # ===== Apply Filters =====
-                    df_view = final_df.copy()
-                    if selected_status:
-                        df_view = df_view[df_view["Order Status Infor"].astype(str).isin(selected_status)]
-                    if selected_pos:
-                        df_view = df_view[df_view["PO No.(Full)"].astype(str).isin(selected_pos)]
-                    for col, sel in result_selections.items():
-                        if sel and set(sel) != set(uniq_vals(final_df, col)):
-                            df_view = df_view[df_view[col].astype(str).isin(sel)]
+                        mode = st.radio("Mode tampilan data", ["Semua Kolom", "Analisis LPD PODD", "Analisis FPD PSDD"], horizontal=False)
 
-                    # ===== Mode Tampilan =====
-                    mode = st.radio("Mode tampilan data", ["Semua Kolom", "Analisis LPD", "Analisis FPD PSDD"], horizontal=True)
+                        submitted = st.form_submit_button("🔄 Execute / Terapkan")
 
-                    # Helper: subset existing columns only
-                    def subset(df, cols):
-                        existing = [c for c in cols if c in df.columns]
-                        missing = [c for c in cols if c not in df.columns]
-                        if missing:
-                            st.caption(f"Kolom tidak ditemukan & di-skip: {missing}")
-                        if not existing:
-                            st.warning("Tidak ada kolom yang cocok untuk mode ini.")
-                            return pd.DataFrame()
-                        return df[existing]
+                    # ===== Apply filters only after Execute =====
+                    if submitted or "df_view" in st.session_state:
+                        # Use latest selections if submitted, else use previous ones from session_state
+                        if submitted:
+                            st.session_state["selected_status"] = selected_status
+                            st.session_state["selected_pos"] = selected_pos
+                            st.session_state["result_selections"] = result_selections
+                            st.session_state["mode"] = mode
 
-                    # ===== Preview sesuai mode =====
-                    st.subheader("🔎 Preview Hasil (After Filters)")
-                    if mode == "Semua Kolom":
-                        st.dataframe(df_view.head(100), use_container_width=True)
-                    elif mode == "Analisis LPD":
-                        cols_lpd = [
-                            "PO No.(Full)", "Order Status Infor", "DRC",
-                            "Delay/Early - Confirmation PD", "Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD",
-                            "Result_Delay_CRD", "Delay - PO PSDD Update", "Infor Delay - PO PSDD Update",
-                            "Result_Delay_PSDD", "Delay - PO PD Update",
-                            "LPD", "Infor LPD", "Result_LPD",
-                            "PODD", "Infor PODD", "Result_PODD"
-                        ]
-                        st.dataframe(subset(df_view, cols_lpd).head(2000), use_container_width=True)
-                    elif mode == "Analisis FPD PSDD":
-                        cols_fpd_psdd = [
-                            "PO No.(Full)", "Order Status Infor", "DRC",
-                            "Delay/Early - Confirmation PD", "Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD",
-                            "Result_Delay_CRD", "Delay - PO PSDD Update", "Infor Delay - PO PSDD Update",
-                            "Result_Delay_PSDD", "Delay - PO PD Update",
-                            "FPD", "Infor FPD", "Result_FPD",
-                            "PSDD", "Infor PSDD", "Result_PSDD"
-                        ]
-                        st.dataframe(subset(df_view, cols_fpd_psdd).head(2000), use_container_width=True)
+                        selected_status = st.session_state.get("selected_status", status_opts)
+                        selected_pos = st.session_state.get("selected_pos", [])
+                        result_selections = st.session_state.get("result_selections", {})
+                        mode = st.session_state.get("mode", "Semua Kolom")
 
-                    # ===== Sample merge check (filtered) =====
-                    merge_cols = [c for c in ["PO No.(Full)", "Quantity", "Infor Quantity"] if c in df_view.columns]
-                    if merge_cols and mode == "Semua Kolom":
-                        st.markdown("**Sample cek hasil merge (PO & Quantity)**")
-                        st.dataframe(df_view[merge_cols].head(10), use_container_width=True)
+                        df_view = final_df.copy()
+                        if selected_status:
+                            df_view = df_view[df_view["Order Status Infor"].astype(str).isin(selected_status)]
+                        if selected_pos:
+                            df_view = df_view[df_view["PO No.(Full)"].astype(str).isin(selected_pos)]
+                        for col, sel in result_selections.items():
+                            base_opts = uniq_vals(final_df, col)
+                            if sel and set(sel) != set(base_opts):
+                                df_view = df_view[df_view[col].astype(str).isin(sel)]
 
-                    # ===== Visualization: TRUE/FALSE counts (filtered) =====
-                    st.subheader("📊 Comparison Summary (TRUE vs FALSE)")
-                    existing_results = [c for c in ["Result_Quantity", "Result_FPD", "Result_LPD", "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"] if c in df_view.columns]
-                    if existing_results:
-                        true_counts = [int(df_view[c].eq("TRUE").sum()) for c in existing_results]
-                        false_counts = [int(df_view[c].eq("FALSE").sum()) for c in existing_results]
-                        total_counts = [int(df_view[c].isin(["TRUE","FALSE"]).sum()) for c in existing_results]
-                        accuracy = [(t / tot * 100.0) if tot > 0 else 0.0 for t, tot in zip(true_counts, total_counts)]
+                        st.session_state["df_view"] = df_view
+                        st.session_state["final_df"] = final_df  # keep for reference
 
-                        summary_df = pd.DataFrame({
-                            "Metric": existing_results,
-                            "TRUE": true_counts,
-                            "FALSE": false_counts,
-                            "Total (TRUE+FALSE)": total_counts,
-                            "TRUE %": [round(a, 2) for a in accuracy],
-                        })
+                        # ===== Preview sesuai mode =====
+                        st.subheader("🔎 Preview Hasil (After Execute)")
+                        def subset(df, cols):
+                            existing = [c for c in cols if c in df.columns]
+                            missing = [c for c in cols if c not in df.columns]
+                            if missing:
+                                st.caption(f"Kolom tidak ditemukan & di-skip: {missing}")
+                            if not existing:
+                                st.warning("Tidak ada kolom yang cocok untuk mode ini.")
+                                return pd.DataFrame()
+                            return df[existing]
 
-                        st.dataframe(summary_df, use_container_width=True)
+                        if mode == "Semua Kolom":
+                            st.dataframe(df_view.head(100), use_container_width=True)
+                        elif mode == "Analisis LPD":
+                            cols_lpd = [
+                                "PO No.(Full)", "Order Status Infor", "DRC",
+                                "Delay/Early - Confirmation PD", "Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD",
+                                "Result_Delay_CRD", "Delay - PO PSDD Update", "Infor Delay - PO PSDD Update",
+                                "Result_Delay_PSDD", "Delay - PO PD Update",
+                                "LPD", "Infor LPD", "Result_LPD",
+                                "PODD", "Infor PODD", "Result_PODD"
+                            ]
+                            st.dataframe(subset(df_view, cols_lpd).head(2000), use_container_width=True)
+                        elif mode == "Analisis FPD PSDD":
+                            cols_fpd_psdd = [
+                                "PO No.(Full)", "Order Status Infor", "DRC",
+                                "Delay/Early - Confirmation PD", "Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD",
+                                "Result_Delay_CRD", "Delay - PO PSDD Update", "Infor Delay - PO PSDD Update",
+                                "Result_Delay_PSDD", "Delay - PO PD Update",
+                                "FPD", "Infor FPD", "Result_FPD",
+                                "PSDD", "Infor PSDD", "Result_PSDD"
+                            ]
+                            st.dataframe(subset(df_view, cols_fpd_psdd).head(2000), use_container_width=True)
 
-                        # Bar chart TRUE/FALSE
-                        chart_df = summary_df.set_index("Metric")[["TRUE", "FALSE"]]
-                        st.bar_chart(chart_df)
+                        # ===== Visualization: TRUE/FALSE counts =====
+                        st.subheader("📊 Comparison Summary (TRUE vs FALSE)")
+                        existing_results = [c for c in ["Result_Quantity", "Result_FPD", "Result_LPD", "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"] if c in df_view.columns]
+                        if existing_results:
+                            true_counts = [int(df_view[c].eq("TRUE").sum()) for c in existing_results]
+                            false_counts = [int(df_view[c].eq("FALSE").sum()) for c in existing_results]
+                            total_counts = [int(df_view[c].isin(["TRUE","FALSE"]).sum()) for c in existing_results]
+                            accuracy = [(t / tot * 100.0) if tot > 0 else 0.0 for t, tot in zip(true_counts, total_counts)]
 
-                        # Bar chart khusus FALSE + TOP terbanyak
-                        st.markdown("**Distribusi FALSE per metric (bar chart)**")
-                        false_df = pd.DataFrame({"Metric": existing_results, "FALSE": false_counts})
-                        false_df_sorted = false_df.sort_values("FALSE", ascending=False).reset_index(drop=True)
-                        st.bar_chart(false_df_sorted.set_index("Metric")["FALSE"])
+                            summary_df = pd.DataFrame({
+                                "Metric": existing_results,
+                                "TRUE": true_counts,
+                                "FALSE": false_counts,
+                                "Total (TRUE+FALSE)": total_counts,
+                                "TRUE %": [round(a, 2) for a in accuracy],
+                            })
 
-                        st.markdown("**🏆 TOP FALSE terbanyak**")
-                        top_n = 5 if len(false_df_sorted) >= 5 else len(false_df_sorted)
-                        st.dataframe(false_df_sorted.head(top_n), use_container_width=True)
+                            st.dataframe(summary_df, use_container_width=True)
 
-                        st.markdown("**Ringkasan jumlah FALSE per metric (lengkap)**")
-                        st.dataframe(false_df_sorted, use_container_width=True)
+                            chart_df = summary_df.set_index("Metric")[["TRUE", "FALSE"]]
+                            st.bar_chart(chart_df)
+
+                            st.markdown("**Distribusi FALSE per metric (bar chart)**")
+                            false_df = pd.DataFrame({"Metric": existing_results, "FALSE": false_counts})
+                            false_df_sorted = false_df.sort_values("FALSE", ascending=False).reset_index(drop=True)
+                            st.bar_chart(false_df_sorted.set_index("Metric")["FALSE"])
+
+                            st.markdown("**🏆 TOP FALSE terbanyak**")
+                            top_n = 5 if len(false_df_sorted) >= 5 else len(false_df_sorted)
+                            st.dataframe(false_df_sorted.head(top_n), use_container_width=True)
+
+                            st.markdown("**Ringkasan jumlah FALSE per metric (lengkap)**")
+                            st.dataframe(false_df_sorted, use_container_width=True)
+                        else:
+                            st.info("Kolom hasil perbandingan (Result_*) belum tersedia di data final.")
+
+                        # ===== Downloads (Filtered by Execute) =====
+                        out_name_xlsx = f"PGD Comparison Tracking Report - {today_str_id()}.xlsx"
+                        out_name_csv = f"PGD Comparison Tracking Report - {today_str_id()}.csv"
+
+                        towrite = io.BytesIO()
+                        with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
+                            df_view.to_excel(writer, index=False, sheet_name="Report")
+                        towrite.seek(0)
+
+                        st.download_button(
+                            label="⬇️ Download Excel (Filtered)",
+                            data=towrite,
+                            file_name=out_name_xlsx,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
+
+                        st.download_button(
+                            label="⬇️ Download CSV (Filtered)",
+                            data=df_view.to_csv(index=False).encode("utf-8"),
+                            file_name=out_name_csv,
+                            mime="text/csv",
+                            use_container_width=True
+                        )
                     else:
-                        st.info("Kolom hasil perbandingan (Result_*) belum tersedia di data final.")
-
-                    # ===== Downloads (filtered) =====
-                    out_name_xlsx = f"PGD Comparison Tracking Report - {today_str_id()}.xlsx"
-                    out_name_csv = f"PGD Comparison Tracking Report - {today_str_id()}.csv"
-
-                    towrite = io.BytesIO()
-                    with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
-                        df_view.to_excel(writer, index=False, sheet_name="Report")
-                    towrite.seek(0)
-
-                    st.download_button(
-                        label="⬇️ Download Excel (Filtered)",
-                        data=towrite,
-                        file_name=out_name_xlsx,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True
-                    )
-
-                    st.download_button(
-                        label="⬇️ Download CSV (Filtered)",
-                        data=df_view.to_csv(index=False).encode("utf-8"),
-                        file_name=out_name_csv,
-                        mime="text/csv",
-                        use_container_width=True
-                    )
+                        st.info("Atur filter/mode di sidebar, lalu klik **🔄 Execute / Terapkan**.")
         except Exception as e:
             status.update(label="Terjadi error saat menjalankan aplikasi.", state="error")
             st.error("Terjadi error saat menjalankan proses. Lihat detail di bawah ini:")
