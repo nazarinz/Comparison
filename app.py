@@ -10,7 +10,7 @@ import streamlit as st
 # ================== Streamlit Config ==================
 st.set_page_config(page_title="PGD Comparison Tracking", layout="wide")
 st.title("📦 PGD Comparison Tracking — SAP vs Infor")
-st.caption("Upload 1 SAP Excel file (.xlsx) dan satu atau lebih Infor CSV (.csv). Aplikasi akan merge, cleaning, comparison, visualisasi, dan sediakan unduhan laporan.")
+st.caption("Upload 1 SAP Excel file (.xlsx) dan satu atau lebih Infor CSV (.csv). Aplikasi akan merge, cleaning, comparison, visualisasi, filter, dan unduhan laporan.")
 
 # ================== Utils ==================
 @st.cache_data(show_spinner=False)
@@ -313,27 +313,67 @@ if sap_file and infor_files:
             else:
                 status.update(label="Report siap! ✅", state="complete")
 
-                # ===== Preview =====
-                st.subheader("🔎 Preview Hasil")
-                st.dataframe(final_df.head(100), use_container_width=True)
+                # ======== Sidebar Filters ========
+                with st.sidebar:
+                    st.header("🔎 Filters")
 
-                # ===== Sample merge check =====
-                merge_cols = [c for c in ["PO No.(Full)", "Quantity", "Infor Quantity"] if c in final_df.columns]
+                    # Helper to get unique values safely
+                    def uniq_vals(df, col):
+                        if col in df.columns:
+                            return sorted([str(x) for x in df[col].dropna().unique().tolist()])
+                        return []
+
+                    # Order Status Infor
+                    status_opts = uniq_vals(final_df, "Order Status Infor")
+                    selected_status = st.multiselect("Order Status Infor", options=status_opts, default=status_opts)
+
+                    # PO No.(Full) (no default to avoid giant selection on big data)
+                    po_opts = uniq_vals(final_df, "PO No.(Full)")
+                    selected_pos = st.multiselect("PO No.(Full)", options=po_opts, placeholder="Pilih satu/lebih PO (opsional)")
+
+                    # Result columns
+                    result_cols = [
+                        "Result_Quantity", "Result_FPD", "Result_LPD",
+                        "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"
+                    ]
+                    result_selections = {}
+                    for col in result_cols:
+                        opts = uniq_vals(final_df, col)
+                        if opts:
+                            # default = semua nilai agar tidak mem-filter saat awal
+                            result_selections[col] = st.multiselect(col, options=opts, default=opts)
+
+                # ===== Apply Filters =====
+                df_view = final_df.copy()
+                # Order Status
+                if selected_status:
+                    df_view = df_view[df_view["Order Status Infor"].astype(str).isin(selected_status)]
+                # PO No.(Full)
+                if selected_pos:
+                    df_view = df_view[df_view["PO No.(Full)"].astype(str).isin(selected_pos)]
+                # Result_* columns
+                for col, sel in result_selections.items():
+                    # apply only if user changed from "all"
+                    if sel and set(sel) != set(uniq_vals(final_df, col)):
+                        df_view = df_view[df_view[col].astype(str).isin(sel)]
+
+                # ===== Preview (filtered) =====
+                st.subheader("🔎 Preview Hasil (After Filters)")
+                st.dataframe(df_view.head(100), use_container_width=True)
+
+                # ===== Sample merge check (filtered) =====
+                merge_cols = [c for c in ["PO No.(Full)", "Quantity", "Infor Quantity"] if c in df_view.columns]
                 if merge_cols:
                     st.markdown("**Sample cek hasil merge (PO & Quantity)**")
-                    st.dataframe(final_df[merge_cols].head(10), use_container_width=True)
+                    st.dataframe(df_view[merge_cols].head(10), use_container_width=True)
 
-                # ===== Visualization: TRUE/FALSE counts =====
+                # ===== Visualization: TRUE/FALSE counts (filtered) =====
                 st.subheader("📊 Comparison Summary (TRUE vs FALSE)")
-                result_cols = [
-                    "Result_Quantity", "Result_FPD", "Result_LPD",
-                    "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"
-                ]
-                existing_results = [c for c in result_cols if c in final_df.columns]
+                existing_results = [c for c in ["Result_Quantity", "Result_FPD", "Result_LPD", "Result_CRD", "Result_PSDD", "Result_PODD", "Result_PD"] if c in df_view.columns]
                 if existing_results:
-                    true_counts = [int(final_df[c].eq("TRUE").sum()) for c in existing_results]
-                    false_counts = [int(final_df[c].eq("FALSE").sum()) for c in existing_results]
-                    total_counts = [int(final_df[c].isin(["TRUE","FALSE"]).sum()) for c in existing_results]
+                    true_counts = [int(df_view[c].eq("TRUE").sum()) for c in existing_results]
+                    false_counts = [int(df_view[c].eq("FALSE").sum()) for c in existing_results]
+                    total_counts = [int(df_view[c].isin(["TRUE","FALSE"]).sum()) for c in existing_results]
                     accuracy = [(t / tot * 100.0) if tot > 0 else 0.0 for t, tot in zip(true_counts, total_counts)]
 
                     summary_df = pd.DataFrame({
@@ -379,19 +419,19 @@ if sap_file and infor_files:
                 else:
                     st.info("Kolom hasil perbandingan (Result_*) belum tersedia di data final.")
 
-                # ===== Downloads =====
+                # ===== Downloads (filtered) =====
                 today_str = datetime.now(ZoneInfo("Asia/Jakarta")).strftime("%Y%m%d")
                 out_name_xlsx = f"PGD Comparison Tracking Report - {today_str}.xlsx"
                 out_name_csv = f"PGD Comparison Tracking Report - {today_str}.csv"
 
-                # Excel buffer
+                # Excel buffer of filtered data
                 towrite = io.BytesIO()
                 with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
-                    final_df.to_excel(writer, index=False, sheet_name="Report")
+                    df_view.to_excel(writer, index=False, sheet_name="Report")
                 towrite.seek(0)
 
                 st.download_button(
-                    label="⬇️ Download Excel",
+                    label="⬇️ Download Excel (Filtered)",
                     data=towrite,
                     file_name=out_name_xlsx,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -399,8 +439,8 @@ if sap_file and infor_files:
                 )
 
                 st.download_button(
-                    label="⬇️ Download CSV",
-                    data=final_df.to_csv(index=False).encode("utf-8"),
+                    label="⬇️ Download CSV (Filtered)",
+                    data=df_view.to_csv(index=False).encode("utf-8"),
                     file_name=out_name_csv,
                     mime="text/csv",
                     use_container_width=True
