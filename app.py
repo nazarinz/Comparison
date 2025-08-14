@@ -382,33 +382,22 @@ if sap_file and infor_files:
 
                         st.dataframe(summary_df, use_container_width=True)
 
+                        # Bar chart TRUE/FALSE
                         chart_df = summary_df.set_index("Metric")[["TRUE", "FALSE"]]
                         st.bar_chart(chart_df)
 
-                        st.markdown("**Distribusi FALSE per metric (chart lingkaran)**")
-                        try:
-                            import matplotlib.pyplot as plt
-                            fig, ax = plt.subplots()
-                            if sum(false_counts) > 0:
-                                ax.pie(
-                                    false_counts,
-                                    labels=existing_results,
-                                    autopct=lambda p: f"{int(round(p*sum(false_counts)/100.0))} ({p:.1f}%)",
-                                    startangle=90
-                                )
-                                ax.axis("equal")
-                                st.pyplot(fig, use_container_width=True)
-                            else:
-                                st.info("Tidak ada nilai FALSE pada metric yang dipilih.")
-                        except Exception as e:
-                            st.warning(f"Gagal menampilkan pie chart: {e}")
+                        # Bar chart khusus FALSE + TOP terbanyak
+                        st.markdown("**Distribusi FALSE per metric (bar chart)**")
+                        false_df = pd.DataFrame({"Metric": existing_results, "FALSE": false_counts})
+                        false_df_sorted = false_df.sort_values("FALSE", ascending=False).reset_index(drop=True)
+                        st.bar_chart(false_df_sorted.set_index("Metric")["FALSE"])
 
-                        st.markdown("**Ringkasan jumlah FALSE per metric**")
-                        false_df = pd.DataFrame({
-                            "Metric": existing_results,
-                            "FALSE": false_counts
-                        })
-                        st.dataframe(false_df, use_container_width=True)
+                        st.markdown("**🏆 TOP FALSE terbanyak**")
+                        top_n = 5 if len(false_df_sorted) >= 5 else len(false_df_sorted)
+                        st.dataframe(false_df_sorted.head(top_n), use_container_width=True)
+
+                        st.markdown("**Ringkasan jumlah FALSE per metric (lengkap)**")
+                        st.dataframe(false_df_sorted, use_container_width=True)
                     else:
                         st.info("Kolom hasil perbandingan (Result_*) belum tersedia di data final.")
 
