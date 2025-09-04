@@ -1,3 +1,13 @@
+# ============================================================
+# PGD Comparison Tracking — SAP vs Infor (Streamlit)
+# - Upload SAP (xlsx) + multi Infor (csv)
+# - Merge, cleaning, comparison, visualisasi, filter (Execute),
+#   dan unduhan laporan Excel yang sudah diberi styling:
+#   * Calibri 9, rata tengah semua sel
+#   * Kolom Infor → kuning ; kolom Result_* → hijau ; lainnya → abu-abu
+#   * Kolom delay tertentu: kosong = benar-benar kosong (bukan NaN/0)
+#   * Kolom tanggal diformat short date m/d/yyyy
+# ============================================================
 
 import io
 import sys
@@ -7,14 +17,44 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+
 # ================== Streamlit Config ==================
 st.set_page_config(page_title="PGD Comparison Tracking", layout="wide")
 st.title("📦 PGD Comparison Tracking — SAP vs Infor")
 st.caption("Upload 1 SAP Excel file (.xlsx) dan satu atau lebih Infor CSV (.csv). Aplikasi akan merge, cleaning, comparison, visualisasi, filter (dengan tombol Execute), dan unduhan laporan.")
 
+# ================== Warna, Kolom, Format ==================
+INFOR_COLOR  = "FFF9F16D"  # kuning lembut
+RESULT_COLOR = "FFC6EFCE"  # hijau lembut
+OTHER_COLOR  = "FFD9D9D9"  # abu-abu muda
+DATE_FMT     = "m/d/yyyy"
+
+INFOR_COLUMNS_FIXED = [
+    "Order Status Infor","Infor Quantity","Infor Model Name","Infor Article No",
+    "Infor Classification Code","Infor Delay/Early - Confirmation CRD",
+    "Infor Delay - PO PSDD Update","Infor Lead time","Infor GPS Country",
+    "Infor Ship-to Country","Infor FPD","Infor LPD","Infor CRD","Infor PSDD",
+    "Infor PODD","Infor PD"
+]
+
+DELAY_EMPTY_COLUMNS = [
+    "Delay/Early - Confirmation CRD",
+    "Infor Delay/Early - Confirmation CRD",
+    "Result_Delay_CRD",
+    "Delay - PO PSDD Update",
+    "Infor Delay - PO PSDD Update"
+]
+
+DATE_COLUMNS_PREF = [
+    "Document Date","FPD","LPD","CRD","PSDD","FCR Date","PODD","PD","PO Date","Actual PGI",
+    "Infor FPD","Infor LPD","Infor CRD","Infor PSDD","Infor PODD","Infor PD"
+]
+
 # ================== Helpers ==================
 def today_str_id():
-    """Return current date string in Asia/Jakarta (UTC+7) as YYYYMMDD without requiring zoneinfo/pytz."""
+    """Return current date string in Asia/Jakarta (UTC+7) as YYYYMMDD without zone libs."""
     return (datetime.utcnow() + timedelta(hours=7)).strftime("%Y%m%d")
 
 @st.cache_data(show_spinner=False)
@@ -87,6 +127,7 @@ def process_infor(df_all):
         return pd.DataFrame()
 
     df_infor = df_all[selected_columns].copy()
+    # agregasi per Order #
     df_infor = df_infor.groupby('Order #', as_index=False).agg({
         'Order Status': 'first',
         'Model Name': 'first',
@@ -180,7 +221,7 @@ def clean_and_compare(df_merged):
         '62': '02-0062', '61': '01-0061', '51': '03-0051', '46': '03-0046',
         '7': '02-0007', '3': '03-0003', '2': '01-0002', '1': '01-0001',
         '4': '04-0004', '8': '02-0008', '10': '04-0010', '49': '03-0049',
-        '90': '04-0090', '63' : '03-0063'
+        '90': '04-0090', '63': '03-0063'
     }
     def map_code_safely(x):
         try:
@@ -284,7 +325,60 @@ def build_report(df_sap, df_infor_raw):
     df_final = reorder_columns(df_final, DESIRED_ORDER)
     return df_final
 
-# ================== Sidebar: Upload & Filter Form ==================
+def _blank_delay_columns(df):
+    out = df.copy()
+    for col in DELAY_EMPTY_COLUMNS:
+        if col in out.columns:
+            out[col] = (
+                out[col]
+                .replace({np.nan:"", pd.NA:"", None:"", "NaN":"", "NAN":"", "NULL":"", "--":"", 0:"", 0.0:"", "0":""})
+            )
+    return out
+
+def _export_excel_styled(df, sheet_name="Report"):
+    # tulis ke buffer lalu styling dengan openpyxl
+    bio = io.BytesIO()
+    with pd.ExcelWriter(bio, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name=sheet_name)
+        wb = writer.book
+        ws = writer.sheets[sheet_name]
+
+        header_cells = list(ws.iter_rows(min_row=1, max_row=1, values_only=False))[0]
+
+        for col_idx in range(1, ws.max_column+1):
+            col_name = header_cells[col_idx-1].value
+
+            # pilih warna kolom
+            if col_name in INFOR_COLUMNS_FIXED:
+                fill = PatternFill("solid", fgColor=INFOR_COLOR)
+            elif str(col_name).startswith("Result_"):
+                fill = PatternFill("solid", fgColor=RESULT_COLOR)
+            else:
+                fill = PatternFill("solid", fgColor=OTHER_COLOR)
+
+            is_date_col = col_name in DATE_COLUMNS_PREF
+
+            for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=col_idx, max_col=col_idx):
+                cell = row[0]
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=False)
+                cell.font = Font(name="Calibri", size=9)
+                cell.fill = fill
+                if is_date_col and cell.row > 1 and cell.value not in ("", None):
+                    cell.number_format = DATE_FMT
+
+        # auto width ringan
+        for col_idx in range(1, ws.max_column+1):
+            col_letter = get_column_letter(col_idx)
+            maxlen = 0
+            for cell in ws[col_letter]:
+                v = "" if cell.value is None else str(cell.value)
+                maxlen = max(maxlen, len(v))
+            ws.column_dimensions[col_letter].width = min(max(9, maxlen + 2), 40)
+
+    bio.seek(0)
+    return bio
+
+# ================== Sidebar: Upload & Tips ==================
 with st.sidebar:
     st.header("📤 Upload Files")
     sap_file = st.file_uploader("SAP Excel (.xlsx)", type=["xlsx"])
@@ -293,7 +387,7 @@ with st.sidebar:
 **Tips:**
 - Pastikan kolom kunci tersedia:
   - SAP: `PO No.(Full)`, `Quantity`, dan kolom tanggal terkait bila ada.
-  - Infor CSV: `PO Statistical Delivery Date (PSDD)`, `Customer Request Date (CRD)`, `Line Aggregator` minimal, sisanya sesuai daftar app.
+  - Infor CSV: `PO Statistical Delivery Date (PSDD)`, `Customer Request Date (CRD)`, `Line Aggregator` minimal, sisanya mengikuti daftar.
 """)
 
 # ================== Main ==================
@@ -348,7 +442,6 @@ if sap_file and infor_files:
 
                     # ===== Apply filters only after Execute =====
                     if submitted or "df_view" in st.session_state:
-                        # Use latest selections if submitted, else use previous ones from session_state
                         if submitted:
                             st.session_state["selected_status"] = selected_status
                             st.session_state["selected_pos"] = selected_pos
@@ -366,12 +459,12 @@ if sap_file and infor_files:
                         if selected_pos:
                             df_view = df_view[df_view["PO No.(Full)"].astype(str).isin(selected_pos)]
                         for col, sel in result_selections.items():
-                            base_opts = uniq_vals(final_df, col)
+                            base_opts = sorted([str(x) for x in final_df[col].dropna().unique().tolist()]) if col in final_df.columns else []
                             if sel and set(sel) != set(base_opts):
                                 df_view = df_view[df_view[col].astype(str).isin(sel)]
 
                         st.session_state["df_view"] = df_view
-                        st.session_state["final_df"] = final_df  # keep for reference
+                        st.session_state["final_df"] = final_df
 
                         # ===== Preview sesuai mode =====
                         st.subheader("🔎 Preview Hasil (After Execute)")
@@ -387,7 +480,7 @@ if sap_file and infor_files:
 
                         if mode == "Semua Kolom":
                             st.dataframe(df_view.head(100), use_container_width=True)
-                        elif mode == "Analisis LPD":
+                        elif mode == "Analisis LPD PODD":
                             cols_lpd = [
                                 "PO No.(Full)", "Order Status Infor", "DRC",
                                 "Delay/Early - Confirmation PD", "Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD",
@@ -446,16 +539,15 @@ if sap_file and infor_files:
 
                         # ===== Downloads (Filtered by Execute) =====
                         out_name_xlsx = f"PGD Comparison Tracking Report - {today_str_id()}.xlsx"
-                        out_name_csv = f"PGD Comparison Tracking Report - {today_str_id()}.csv"
+                        out_name_csv  = f"PGD Comparison Tracking Report - {today_str_id()}.csv"
 
-                        towrite = io.BytesIO()
-                        with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
-                            df_view.to_excel(writer, index=False, sheet_name="Report")
-                        towrite.seek(0)
+                        # Bersihkan kolom delay agar kosong beneran, lalu ekspor dengan styling
+                        df_export = _blank_delay_columns(df_view)
+                        excel_bytes = _export_excel_styled(df_export, sheet_name="Report")
 
                         st.download_button(
-                            label="⬇️ Download Excel (Filtered)",
-                            data=towrite,
+                            label="⬇️ Download Excel (Filtered, styled)",
+                            data=excel_bytes,
                             file_name=out_name_xlsx,
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             use_container_width=True
@@ -463,7 +555,7 @@ if sap_file and infor_files:
 
                         st.download_button(
                             label="⬇️ Download CSV (Filtered)",
-                            data=df_view.to_csv(index=False).encode("utf-8"),
+                            data=df_export.to_csv(index=False).encode("utf-8"),
                             file_name=out_name_csv,
                             mime="text/csv",
                             use_container_width=True
