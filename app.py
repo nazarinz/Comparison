@@ -7,13 +7,19 @@ import sys
 import re
 import zipfile
 from datetime import datetime, timedelta
+from contextlib import nullcontext
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
+# ==== OpenPyXL (opsional, untuk ekspor Excel yang di-styling) ====
+EXCEL_EXPORT_AVAILABLE = True
+try:
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+except Exception as _e:
+    EXCEL_EXPORT_AVAILABLE = False  # jangan crash, beri tahu user saat ekspor
 
 # ================== Streamlit Config ==================
 st.set_page_config(page_title="PGD Comparison & PO Splitter", layout="wide")
@@ -50,6 +56,27 @@ DATE_COLUMNS_PREF = [
 # ================== Helpers (Umum) ==================
 def today_str_id():
     return (datetime.utcnow() + timedelta(hours=7)).strftime("%Y%m%d")
+
+def status_ctx(label="Processing...", expanded=True):
+    """Fallback untuk st.status agar kompatibel dengan versi Streamlit lama."""
+    if hasattr(st, "status"):
+        return st.status(label, expanded=expanded)
+    else:
+        # tampilkan info biasa; kembalikan context kosong
+        st.info(label)
+        return nullcontext()
+
+def _status_update(ctx, label=None, state=None):
+    """Update status bila tersedia; kalau tidak, tampilkan elemen sederhana."""
+    if hasattr(ctx, "update"):
+        ctx.update(label=label, state=state)
+    else:
+        if state == "error":
+            st.error(label or "")
+        elif state == "complete":
+            st.success(label or "")
+        else:
+            st.info(label or "")
 
 @st.cache_data(show_spinner=False)
 def read_excel_file(file):
@@ -274,6 +301,10 @@ def _blank_delay_columns(df):
 
 def _export_excel_styled(df, sheet_name="Report"):
     """Header saja yang diwarnai; body tanpa fill. Calibri 9 center. Dates m/d/yyyy."""
+    if not EXCEL_EXPORT_AVAILABLE:
+        raise RuntimeError(
+            "Fitur ekspor Excel (styled) butuh 'openpyxl'. Tambahkan ke requirements.txt: openpyxl>=3.1"
+        )
     bio = io.BytesIO()
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name=sheet_name)
@@ -423,7 +454,7 @@ with tab1:
 """)
 
     if sap_file and infor_files:
-        with st.status("Membaca & menggabungkan file...", expanded=True) as status:
+        with status_ctx("Membaca & menggabungkan file...", expanded=True) as status:
             try:
                 sap_df = read_excel_file(sap_file)
                 st.write("SAP dibaca:", sap_df.shape)
@@ -433,15 +464,15 @@ with tab1:
                 st.write("Total Infor (gabungan CSV):", infor_all.shape)
 
                 if infor_all.empty:
-                    status.update(label="Gagal: tidak ada CSV Infor yang valid.", state="error")
+                    _status_update(status, label="Gagal: tidak ada CSV Infor yang valid.", state="error")
                 else:
-                    status.update(label="Sukses membaca semua file. Lanjut proses...", state="running")
+                    _status_update(status, label="Sukses membaca semua file. Lanjut proses...", state="running")
                     final_df = build_report(sap_df, infor_all)
 
                     if final_df.empty:
-                        status.update(label="Gagal membuat report — periksa kolom wajib.", state="error")
+                        _status_update(status, label="Gagal membuat report — periksa kolom wajib.", state="error")
                     else:
-                        status.update(label="Report siap! ✅", state="complete")
+                        _status_update(status, label="Report siap! ✅", state="complete")
 
                         # ======== Sidebar Form (Filters + Mode + Execute) ========
                         with st.sidebar.form("filters_form"):
@@ -553,15 +584,8 @@ with tab1:
                             out_name_csv  = f"PGD Comparison Tracking Report - {today_str_id()}.csv"
 
                             df_export = _blank_delay_columns(df_view)
-                            excel_bytes = _export_excel_styled(df_export, sheet_name="Report")
 
-                            st.download_button(
-                                label="⬇️ Download Excel (Filtered, styled)",
-                                data=excel_bytes,
-                                file_name=out_name_xlsx,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True
-                            )
+                            # CSV selalu tersedia
                             st.download_button(
                                 label="⬇️ Download CSV (Filtered)",
                                 data=df_export.to_csv(index=False).encode("utf-8"),
@@ -569,10 +593,23 @@ with tab1:
                                 mime="text/csv",
                                 use_container_width=True
                             )
+
+                            # Excel styled: coba, dan beri warning bila openpyxl tidak tersedia
+                            try:
+                                excel_bytes = _export_excel_styled(df_export, sheet_name="Report")
+                                st.download_button(
+                                    label="⬇️ Download Excel (Filtered, styled)",
+                                    data=excel_bytes,
+                                    file_name=out_name_xlsx,
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    use_container_width=True
+                                )
+                            except Exception as ex_excel:
+                                st.warning(f"Gagal membuat Excel styled: {ex_excel}")
                         else:
                             st.info("Atur filter/mode di sidebar, lalu klik **🔄 Execute / Terapkan**.")
             except Exception as e:
-                status.update(label="Terjadi error saat menjalankan aplikasi.", state="error")
+                _status_update(status, label="Terjadi error saat menjalankan aplikasi.", state="error")
                 st.error("Terjadi error saat menjalankan proses. Detail di bawah ini:")
                 st.exception(e)
     else:
@@ -707,5 +744,6 @@ with st.expander("🛠 Debug Info"):
         st.write("Pandas:", pd.__version__)
         import numpy
         st.write("NumPy:", numpy.__version__)
+        st.write("openpyxl available:", EXCEL_EXPORT_AVAILABLE)
     except Exception as e:
         st.write("Failed to show debug info:", e)
