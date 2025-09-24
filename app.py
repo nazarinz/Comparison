@@ -37,8 +37,10 @@ INFOR_COLUMNS_FIXED = [
     "Infor Classification Code","Infor Delay/Early - Confirmation CRD",
     "Infor Delay - PO PSDD Update","Infor Lead time","Infor GPS Country",
     "Infor Ship-to Country","Infor FPD","Infor LPD","Infor CRD","Infor PSDD",
-    "Infor PODD","Infor PD"
+    "Infor PODD","Infor PD",
+    "Infor Delay - PO PD Update"
 ]
+
 
 DELAY_EMPTY_COLUMNS = [
     "Delay/Early - Confirmation CRD",
@@ -131,7 +133,8 @@ def process_infor(df_all):
         'Order #','Order Status','Model Name','Article Number','Gps Customer Number',
         'Country/Region','Customer Request Date (CRD)','Plan Date','PO Statistical Delivery Date (PSDD)',
         'First Production Date','Last Production Date','PODD','Production Lead Time',
-        'Class Code','Delay - Confirmation','Delay - PO Del Update','Quantity'
+        'Class Code','Delay - Confirmation','Delay - PO Del Update','Quantity',
+        'Delivery Delay Pd'
     ]
     missing_cols = [col for col in selected_columns if col not in df_all.columns]
     if missing_cols:
@@ -145,7 +148,8 @@ def process_infor(df_all):
         'PO Statistical Delivery Date (PSDD)':'first','First Production Date':'first',
         'Last Production Date':'first','PODD':'first','Production Lead Time':'first',
         'Class Code':'first','Delay - Confirmation':'first','Delay - PO Del Update':'first',
-        'Quantity':'sum'
+        'Quantity':'sum',
+        'Delivery Delay Pd':'first'
     })
     df_infor["Order #"] = df_infor["Order #"].astype(str).str.zfill(10).str.strip()
 
@@ -156,12 +160,13 @@ def process_infor(df_all):
         'PO Statistical Delivery Date (PSDD)':'Infor PSDD','First Production Date':'Infor FPD',
         'Last Production Date':'Infor LPD','PODD':'Infor PODD','Production Lead Time':'Infor Lead time',
         'Class Code':'Infor Classification Code','Delay - Confirmation':'Infor Delay/Early - Confirmation CRD',
-        'Delay - PO Del Update':'Infor Delay - PO PSDD Update','Quantity':'Infor Quantity'
+        'Delay - PO Del Update':'Infor Delay - PO PSDD Update','Quantity':'Infor Quantity',
+        'Delivery Delay Pd':'Infor Delay - PO PD Update'
     }
     df_infor.rename(columns=rename_cols, inplace=True)
     st.info(f"Jumlah baris setelah proses Infor: {len(df_infor)}")
     return df_infor
-
+    
 def merge_sap_infor(df_sap, df_infor):
     df_sap = df_sap.copy()
     df_infor = df_infor.copy()
@@ -198,7 +203,7 @@ def clean_and_compare(df_merged):
     code_mapping = {
         '161':'01-0161','84':'03-0084','68':'02-0068','64':'04-0064','62':'02-0062','61':'01-0061',
         '51':'03-0051','46':'03-0046','7':'02-0007','3':'03-0003','2':'01-0002','1':'01-0001',
-        '4':'04-0004','8':'02-0008','10':'04-0010','49':'03-0049','90':'04-0090','63':'03-0063'
+        '4':'04-0004','8':'02-0008','10':'04-0010','49':'03-0049','90':'04-0090','63':'03-0063', '27':'04-0027', '27.0':'04-0027'
     }
     def map_code_safely(x):
         try:
@@ -216,6 +221,12 @@ def clean_and_compare(df_merged):
             df_merged["Infor Delay - PO PSDD Update"]
             .replace(['--','N/A','NULL'], pd.NA).apply(map_code_safely)
         )
+    # ⬇️ mapping untuk kolom Infor Delay PD yang baru
+    if "Infor Delay - PO PD Update" in df_merged.columns:
+        df_merged["Infor Delay - PO PD Update"] = (
+            df_merged["Infor Delay - PO PD Update"]
+            .replace(['--','N/A','NULL'], pd.NA).apply(map_code_safely)
+        )
 
     # normalisasi string
     string_cols = [
@@ -224,7 +235,8 @@ def clean_and_compare(df_merged):
         "Ship-to Country","Infor Ship-to Country",
         "Ship-to-Sort1","Infor GPS Country",
         "Delay/Early - Confirmation CRD","Infor Delay/Early - Confirmation CRD",
-        "Delay - PO PSDD Update","Infor Delay - PO PSDD Update"
+        "Delay - PO PSDD Update","Infor Delay - PO PSDD Update",
+        "Delay - PO PD Update","Infor Delay - PO PD Update"
     ]
     for col in string_cols:
         if col in df_merged.columns:
@@ -246,6 +258,7 @@ def clean_and_compare(df_merged):
     df_merged["Result_Classification Code"]   = safe_result("Classification Code","Infor Classification Code")
     df_merged["Result_Delay_CRD"]             = safe_result("Delay/Early - Confirmation CRD","Infor Delay/Early - Confirmation CRD")
     df_merged["Result_Delay_PSDD"]            = safe_result("Delay - PO PSDD Update","Infor Delay - PO PSDD Update")
+    df_merged["Result_Delay_PD"]              = safe_result("Delay - PO PD Update","Infor Delay - PO PD Update")
     df_merged["Result_Lead Time"]             = safe_result("Article Lead time","Infor Lead time")
     df_merged["Result_Country"]               = safe_result("Ship-to Country","Infor Ship-to Country")
     df_merged["Result_Sort1"]                 = safe_result("Ship-to-Sort1","Infor GPS Country")
@@ -258,6 +271,7 @@ def clean_and_compare(df_merged):
 
     return df_merged
 
+
 DESIRED_ORDER = [
     'Client No','Site','Brand FTY Name','SO','Order Type','Order Type Description',
     'PO No.(Full)','Order Status Infor','PO No.(Short)','Merchandise Category 2','Quantity',
@@ -267,7 +281,9 @@ DESIRED_ORDER = [
     'Classification Code','Infor Classification Code','Result_Classification Code','DRC',
     'Delay/Early - Confirmation PD','Delay/Early - Confirmation CRD','Infor Delay/Early - Confirmation CRD',
     'Result_Delay_CRD','Delay - PO PSDD Update','Infor Delay - PO PSDD Update','Result_Delay_PSDD',
-    'Delay - PO PD Update','MDP','PDP','SDP','Article Lead time','Infor Lead time',
+    'Delay - PO PD Update',
+    'Infor Delay - PO PD Update','Result_Delay_PD',
+    'MDP','PDP','SDP','Article Lead time','Infor Lead time',
     'Result_Lead Time','Cust Ord No','Ship-to-Sort1','Infor GPS Country','Result_Sort1',
     'Ship-to Country','Infor Ship-to Country','Result_Country',
     'Ship to Name','Document Date','FPD','Infor FPD','Result_FPD','LPD','Infor LPD',
