@@ -1,5 +1,5 @@
 # ============================================================
-# PGD Comparison Tracking — SAP vs Infor  +  PO Splitter (2 Tabs)
+# PGD Comparison Tracking — SAP vs Infor  |  PO Splitter 5.000 | Sales Analytics Dashboard
 # ============================================================
 
 import io
@@ -18,13 +18,12 @@ EXCEL_EXPORT_AVAILABLE = True
 try:
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
-except Exception as _e:
-    EXCEL_EXPORT_AVAILABLE = False  # jangan crash, beri tahu user saat ekspor
+except Exception:
+    EXCEL_EXPORT_AVAILABLE = False
 
 # ================== Streamlit Config ==================
-st.set_page_config(page_title="PGD Comparison & PO Splitter", layout="wide")
-st.title("📦 PGD Comparison Tracking — SAP vs Infor  |  🧩 PO Splitter 5.000")
-st.caption("Tab 1: PGD Comparison (merge, cleaning, comparison, visualisasi, filter, download).  Tab 2: Split daftar PO menjadi beberapa bagian (maks N/part).")
+st.set_page_config(page_title="PGD Comparison & PO Splitter & Dashboard", layout="wide")
+st.title("📦 PGD Comparison — SAP vs Infor  |  🧩 PO Splitter 5.000  |  📈 Sales Analytics")
 
 # ================== Warna, Kolom, Format ==================
 INFOR_COLOR  = "FFF9F16D"  # kuning lembut (header Infor)
@@ -40,7 +39,6 @@ INFOR_COLUMNS_FIXED = [
     "Infor PODD","Infor PD",
     "Infor Delay - PO PD Update"
 ]
-
 
 DELAY_EMPTY_COLUMNS = [
     "Delay/Early - Confirmation CRD",
@@ -60,25 +58,17 @@ def today_str_id():
     return (datetime.utcnow() + timedelta(hours=7)).strftime("%Y%m%d")
 
 def status_ctx(label="Processing...", expanded=True):
-    """Fallback untuk st.status agar kompatibel dengan versi Streamlit lama."""
     if hasattr(st, "status"):
         return st.status(label, expanded=expanded)
-    else:
-        # tampilkan info biasa; kembalikan context kosong
-        st.info(label)
-        return nullcontext()
+    st.info(label);  return nullcontext()
 
 def _status_update(ctx, label=None, state=None):
-    """Update status bila tersedia; kalau tidak, tampilkan elemen sederhana."""
     if hasattr(ctx, "update"):
         ctx.update(label=label, state=state)
     else:
-        if state == "error":
-            st.error(label or "")
-        elif state == "complete":
-            st.success(label or "")
-        else:
-            st.info(label or "")
+        if state == "error": st.error(label or "")
+        elif state == "complete": st.success(label or "")
+        else: st.info(label or "")
 
 @st.cache_data(show_spinner=False)
 def read_excel_file(file):
@@ -88,12 +78,10 @@ def read_excel_file(file):
 def read_csv_file(file):
     for enc in ("utf-8", "utf-8-sig", "latin1"):
         try:
-            file.seek(0)
-            return pd.read_csv(file, encoding=enc)
+            file.seek(0);  return pd.read_csv(file, encoding=enc)
         except Exception:
             continue
-    file.seek(0)
-    return pd.read_csv(file)
+    file.seek(0);  return pd.read_csv(file)
 
 def convert_date_columns(df):
     date_cols = [
@@ -119,13 +107,11 @@ def load_infor_from_many_csv(csv_dfs):
     required_cols = ['PO Statistical Delivery Date (PSDD)','Customer Request Date (CRD)','Line Aggregator']
     for i, df in enumerate(csv_dfs, start=1):
         if all(col in df.columns for col in required_cols):
-            data_list.append(df)
-            st.success(f"Dibaca ✅ CSV ke-{i} (kolom wajib lengkap)")
+            data_list.append(df);  st.success(f"Dibaca ✅ CSV ke-{i} (kolom wajib lengkap)")
         else:
             miss = [c for c in required_cols if c not in df.columns]
             st.warning(f"CSV ke-{i} dilewati ⚠️ (kolom wajib hilang: {miss})")
-    if not data_list:
-        return pd.DataFrame()
+    if not data_list: return pd.DataFrame()
     return pd.concat(data_list, ignore_index=True)
 
 def process_infor(df_all):
@@ -166,10 +152,9 @@ def process_infor(df_all):
     df_infor.rename(columns=rename_cols, inplace=True)
     st.info(f"Jumlah baris setelah proses Infor: {len(df_infor)}")
     return df_infor
-    
+
 def merge_sap_infor(df_sap, df_infor):
-    df_sap = df_sap.copy()
-    df_infor = df_infor.copy()
+    df_sap = df_sap.copy();  df_infor = df_infor.copy()
     if 'PO No.(Full)' in df_sap.columns:
         df_sap['PO No.(Full)'] = df_sap['PO No.(Full)'].astype(str).str.zfill(10)
     if 'Order #' in df_infor.columns:
@@ -180,8 +165,7 @@ def fill_missing_dates(df):
     df = df.copy()
     df['Order Status Infor'] = df.get('Order Status Infor', pd.Series(dtype=str)).astype(str).str.strip().str.upper()
     for col in ['LPD','FPD','CRD','PD','PSDD','PODD']:
-        if col not in df.columns:
-            df[col] = pd.NaT
+        if col not in df.columns: df[col] = pd.NaT
         df[col] = pd.to_datetime(df[col], errors='coerce')
     mask_open = df['Order Status Infor'].eq('OPEN')
     min_dates = df[['CRD','PD']].min(axis=1)
@@ -194,22 +178,18 @@ def fill_missing_dates(df):
 def clean_and_compare(df_merged):
     df_merged = df_merged.copy()
 
-    # numerik
     for col in ["Quantity","Infor Quantity","Production Lead Time","Infor Lead time","Article Lead time"]:
         if col in df_merged.columns:
             df_merged[col] = pd.to_numeric(df_merged[col], errors="coerce").fillna(0).round(2)
 
-    # mapping delay codes
     code_mapping = {
         '161':'01-0161','84':'03-0084','68':'02-0068','64':'04-0064','62':'02-0062','61':'01-0061',
         '51':'03-0051','46':'03-0046','7':'02-0007','3':'03-0003','2':'01-0002','1':'01-0001',
-        '4':'04-0004','8':'02-0008','10':'04-0010','49':'03-0049','90':'04-0090','63':'03-0063', '27':'04-0027', '27.0':'04-0027'
+        '4':'04-0004','8':'02-0008','10':'04-0010','49':'03-0049','90':'04-0090','63':'03-0063','27':'04-0027'
     }
     def map_code_safely(x):
-        try:
-            return code_mapping.get(str(int(float(x))), x)
-        except (ValueError, TypeError):
-            return x
+        try: return code_mapping.get(str(int(float(x))), x)
+        except (ValueError, TypeError): return x
 
     if "Infor Delay/Early - Confirmation CRD" in df_merged.columns:
         df_merged["Infor Delay/Early - Confirmation CRD"] = (
@@ -221,14 +201,12 @@ def clean_and_compare(df_merged):
             df_merged["Infor Delay - PO PSDD Update"]
             .replace(['--','N/A','NULL'], pd.NA).apply(map_code_safely)
         )
-    # ⬇️ mapping untuk kolom Infor Delay PD yang baru
     if "Infor Delay - PO PD Update" in df_merged.columns:
         df_merged["Infor Delay - PO PD Update"] = (
             df_merged["Infor Delay - PO PD Update"]
             .replace(['--','N/A','NULL'], pd.NA).apply(map_code_safely)
         )
 
-    # normalisasi string
     string_cols = [
         "Model Name","Infor Model Name","Article No","Infor Article No",
         "Classification Code","Infor Classification Code",
@@ -246,31 +224,28 @@ def clean_and_compare(df_merged):
     if "Infor GPS Country" in df_merged.columns:
         df_merged["Infor GPS Country"] = df_merged["Infor GPS Country"].astype(str).str.replace(".0","", regex=False)
 
-    # hasil perbandingan
     def safe_result(c1, c2):
         if c1 in df_merged.columns and c2 in df_merged.columns:
             return np.where(df_merged[c1] == df_merged[c2], "TRUE", "FALSE")
         return ["COLUMN MISSING"] * len(df_merged)
 
-    df_merged["Result_Quantity"]              = safe_result("Quantity","Infor Quantity")
-    df_merged["Result_Model Name"]            = safe_result("Model Name","Infor Model Name")
-    df_merged["Result_Article No"]            = safe_result("Article No","Infor Article No")
-    df_merged["Result_Classification Code"]   = safe_result("Classification Code","Infor Classification Code")
-    df_merged["Result_Delay_CRD"]             = safe_result("Delay/Early - Confirmation CRD","Infor Delay/Early - Confirmation CRD")
-    df_merged["Result_Delay_PSDD"]            = safe_result("Delay - PO PSDD Update","Infor Delay - PO PSDD Update")
-    df_merged["Result_Delay_PD"]              = safe_result("Delay - PO PD Update","Infor Delay - PO PD Update")
-    df_merged["Result_Lead Time"]             = safe_result("Article Lead time","Infor Lead time")
-    df_merged["Result_Country"]               = safe_result("Ship-to Country","Infor Ship-to Country")
-    df_merged["Result_Sort1"]                 = safe_result("Ship-to-Sort1","Infor GPS Country")
-    df_merged["Result_FPD"]                   = safe_result("FPD","Infor FPD")
-    df_merged["Result_LPD"]                   = safe_result("LPD","Infor LPD")
-    df_merged["Result_CRD"]                   = safe_result("CRD","Infor CRD")
-    df_merged["Result_PSDD"]                  = safe_result("PSDD","Infor PSDD")
-    df_merged["Result_PODD"]                  = safe_result("PODD","Infor PODD")
-    df_merged["Result_PD"]                    = safe_result("PD","Infor PD")
-
+    df_merged["Result_Quantity"]            = safe_result("Quantity","Infor Quantity")
+    df_merged["Result_Model Name"]          = safe_result("Model Name","Infor Model Name")
+    df_merged["Result_Article No"]          = safe_result("Article No","Infor Article No")
+    df_merged["Result_Classification Code"] = safe_result("Classification Code","Infor Classification Code")
+    df_merged["Result_Delay_CRD"]           = safe_result("Delay/Early - Confirmation CRD","Infor Delay/Early - Confirmation CRD")
+    df_merged["Result_Delay_PSDD"]          = safe_result("Delay - PO PSDD Update","Infor Delay - PO PSDD Update")
+    df_merged["Result_Delay_PD"]            = safe_result("Delay - PO PD Update","Infor Delay - PO PD Update")
+    df_merged["Result_Lead Time"]           = safe_result("Article Lead time","Infor Lead time")
+    df_merged["Result_Country"]             = safe_result("Ship-to Country","Infor Ship-to Country")
+    df_merged["Result_Sort1"]               = safe_result("Ship-to-Sort1","Infor GPS Country")
+    df_merged["Result_FPD"]                 = safe_result("FPD","Infor FPD")
+    df_merged["Result_LPD"]                 = safe_result("LPD","Infor LPD")
+    df_merged["Result_CRD"]                 = safe_result("CRD","Infor CRD")
+    df_merged["Result_PSDD"]                = safe_result("PSDD","Infor PSDD")
+    df_merged["Result_PODD"]                = safe_result("PODD","Infor PODD")
+    df_merged["Result_PD"]                  = safe_result("PD","Infor PD")
     return df_merged
-
 
 DESIRED_ORDER = [
     'Client No','Site','Brand FTY Name','SO','Order Type','Order Type Description',
@@ -281,8 +256,7 @@ DESIRED_ORDER = [
     'Classification Code','Infor Classification Code','Result_Classification Code','DRC',
     'Delay/Early - Confirmation PD','Delay/Early - Confirmation CRD','Infor Delay/Early - Confirmation CRD',
     'Result_Delay_CRD','Delay - PO PSDD Update','Infor Delay - PO PSDD Update','Result_Delay_PSDD',
-    'Delay - PO PD Update',
-    'Infor Delay - PO PD Update','Result_Delay_PD',
+    'Delay - PO PD Update','Infor Delay - PO PD Update','Result_Delay_PD',
     'MDP','PDP','SDP','Article Lead time','Infor Lead time',
     'Result_Lead Time','Cust Ord No','Ship-to-Sort1','Infor GPS Country','Result_Sort1',
     'Ship-to Country','Infor Ship-to Country','Result_Country',
@@ -299,13 +273,12 @@ def reorder_columns(df, desired_order):
 
 def build_report(df_sap, df_infor_raw):
     df_infor = process_infor(df_infor_raw)
-    if df_infor.empty:
-        return pd.DataFrame()
+    if df_infor.empty: return pd.DataFrame()
     df_sap2 = convert_date_columns(load_sap(df_sap))
     df_infor2 = convert_date_columns(df_infor)
     df_merged = merge_sap_infor(df_sap2, df_infor2)
     df_merged = fill_missing_dates(df_merged)
-    df_final = clean_and_compare(df_merged)
+    df_final  = clean_and_compare(df_merged)
     return reorder_columns(df_final, DESIRED_ORDER)
 
 def _blank_delay_columns(df):
@@ -316,22 +289,16 @@ def _blank_delay_columns(df):
     return out
 
 def _export_excel_styled(df, sheet_name="Report"):
-    """Header saja yang diwarnai; body tanpa fill. Calibri 9 center. Dates m/d/yyyy."""
     if not EXCEL_EXPORT_AVAILABLE:
-        raise RuntimeError(
-            "Fitur ekspor Excel (styled) butuh 'openpyxl'. Tambahkan ke requirements.txt: openpyxl>=3.1"
-        )
+        raise RuntimeError("Fitur ekspor Excel (styled) butuh 'openpyxl' (requirements.txt: openpyxl>=3.1)")
     bio = io.BytesIO()
     with pd.ExcelWriter(bio, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name=sheet_name)
         ws = writer.sheets[sheet_name]
 
-        # Bersihkan semua fill (antisipasi sisa style)
         for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
-            for cell in row:
-                cell.fill = PatternFill(fill_type=None)
+            for cell in row: cell.fill = PatternFill(fill_type=None)
 
-        # Header coloring (baris 1)
         header_cells = list(ws.iter_rows(min_row=1, max_row=1, values_only=False))[0]
         idx_by_name = {c.value: i+1 for i, c in enumerate(header_cells)}
         for cell in header_cells:
@@ -343,17 +310,15 @@ def _export_excel_styled(df, sheet_name="Report"):
             else:
                 fill = PatternFill("solid", fgColor=OTHER_COLOR)
             cell.fill = fill
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=False)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
             cell.font = Font(name="Calibri", size=9, bold=True)
 
-        # Body tanpa warna + font/alignment
         for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
             for cell in row:
                 cell.fill = PatternFill(fill_type=None)
-                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=False)
+                cell.alignment = Alignment(horizontal="center", vertical="center")
                 cell.font = Font(name="Calibri", size=9)
 
-        # Format tanggal (body)
         for date_col in DATE_COLUMNS_PREF:
             if date_col in idx_by_name:
                 cidx = idx_by_name[date_col]
@@ -362,7 +327,6 @@ def _export_excel_styled(df, sheet_name="Report"):
                     if cell.value not in ("", None):
                         cell.number_format = DATE_FMT
 
-        # Auto width
         for col_idx in range(1, ws.max_column + 1):
             col_letter = get_column_letter(col_idx)
             maxlen = 0
@@ -371,34 +335,26 @@ def _export_excel_styled(df, sheet_name="Report"):
                 maxlen = max(maxlen, len(v))
             ws.column_dimensions[col_letter].width = min(max(9, maxlen + 2), 40)
 
-        # UX
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
-
     bio.seek(0)
     return bio
 
 # ================== Helpers (PO Splitter) ==================
 def parse_input(text: str, split_mode: str = "auto"):
     text = text.strip()
-    if not text:
-        return []
-    if split_mode == "newline":
-        raw = text.splitlines()
-    elif split_mode == "comma":
-        raw = text.split(",")
-    elif split_mode == "semicolon":
-        raw = text.split(";")
-    elif split_mode == "whitespace":
-        raw = re.split(r"\s+", text)
+    if not text: return []
+    if split_mode == "newline": raw = text.splitlines()
+    elif split_mode == "comma": raw = text.split(",")
+    elif split_mode == "semicolon": raw = text.split(";")
+    elif split_mode == "whitespace": raw = re.split(r"\s+", text)
     else:
         if "\n" in text:
             raw = re.split(r"[\r\n]+", text)
             split_more = []
             for line in raw:
                 line = line.strip()
-                if not line:
-                    continue
+                if not line: continue
                 if ("," in line) or (";" in line):
                     split_more.extend(re.split(r"[,;]", line))
                 else:
@@ -408,22 +364,17 @@ def parse_input(text: str, split_mode: str = "auto"):
             raw = re.split(r"[,;]", text)
         else:
             raw = re.split(r"\s+", text)
-    items = [x.strip() for x in raw if str(x).strip() != ""]
-    return items
+    return [x.strip() for x in raw if str(x).strip() != ""]
 
 def normalize_items(items, keep_only_digits=False, upper_case=False, strip_prefix_suffix=False):
     normed = []
     for it in items:
         s = str(it)
-        if strip_prefix_suffix:
-            s = re.sub(r"^\W+|\W+$", "", s)
-        if keep_only_digits:
-            s = re.sub(r"\D+", "", s)
-        if upper_case:
-            s = s.upper()
+        if strip_prefix_suffix: s = re.sub(r"^\W+|\W+$", "", s)
+        if keep_only_digits: s = re.sub(r"\D+", "", s)
+        if upper_case: s = s.upper()
         s = s.strip()
-        if s != "":
-            normed.append(s)
+        if s != "": normed.append(s)
     return normed
 
 def chunk_list(items, size):
@@ -431,8 +382,7 @@ def chunk_list(items, size):
 
 def to_txt_bytes(lines):
     buf = io.StringIO()
-    for ln in lines:
-        buf.write(f"{ln}\n")
+    for ln in lines: buf.write(f"{ln}\n")
     return buf.getvalue().encode("utf-8")
 
 def df_from_list(items, col_name="PO"):
@@ -448,17 +398,15 @@ def make_zip_bytes(chunks, basename="chunk", as_csv=True, col_name="PO"):
                 zf.writestr(f"{basename}_{idx:02d}.csv", csv_bytes)
             else:
                 zf.writestr(f"{basename}_{idx:02d}.txt", to_txt_bytes(part))
-    mem.seek(0)
-    return mem
+    mem.seek(0);  return mem
 
 # ================== Tabs ==================
-tab1, tab2 = st.tabs(["📦 PGD Comparison", "🧩 PO Splitter"])
+tab1, tab2, tab3 = st.tabs(["📦 PGD Comparison", "🧩 PO Splitter", "📈 Sales Analytics Dashboard"])
 
 # ------------------ Tab 1: PGD Comparison ------------------
 with tab1:
-    st.caption("Upload 1 SAP Excel (*.xlsx) dan satu atau lebih Infor CSV (*.csv). Aplikasi akan merge, cleaning, comparison, visualisasi, filter (Execute), dan unduhan laporan (Excel/CSV).")
+    st.caption("Upload 1 SAP Excel (*.xlsx) dan satu atau lebih Infor CSV (*.csv). App akan merge, cleaning, comparison, filter, dan unduhan report (Excel/CSV).")
 
-    # Sidebar Upload
     with st.sidebar:
         st.header("📤 Upload Files (PGD)")
         sap_file = st.file_uploader("SAP Excel (.xlsx)", type=["xlsx"], key="sap_upload")
@@ -490,7 +438,6 @@ with tab1:
                     else:
                         _status_update(status, label="Report siap! ✅", state="complete")
 
-                        # ======== Sidebar Form (Filters + Mode + Execute) ========
                         with st.sidebar.form("filters_form"):
                             st.header("🔎 Filters & Mode")
                             def uniq_vals(df, col):
@@ -512,7 +459,6 @@ with tab1:
                             mode = st.radio("Mode tampilan data", ["Semua Kolom", "Analisis LPD PODD", "Analisis FPD PSDD"], horizontal=False)
                             submitted = st.form_submit_button("🔄 Execute / Terapkan")
 
-                        # ===== Apply filters only after Execute =====
                         if submitted or "df_view" in st.session_state:
                             if submitted:
                                 st.session_state["selected_status"] = selected_status
@@ -538,16 +484,13 @@ with tab1:
                             st.session_state["df_view"] = df_view
                             st.session_state["final_df"] = final_df
 
-                            # ===== Preview sesuai mode =====
                             st.subheader("🔎 Preview Hasil (After Execute)")
                             def subset(df, cols):
                                 existing = [c for c in cols if c in df.columns]
                                 missing = [c for c in cols if c not in df.columns]
-                                if missing:
-                                    st.caption(f"Kolom tidak ditemukan & di-skip: {missing}")
+                                if missing: st.caption(f"Kolom tidak ditemukan & di-skip: {missing}")
                                 if not existing:
-                                    st.warning("Tidak ada kolom yang cocok untuk mode ini.")
-                                    return pd.DataFrame()
+                                    st.warning("Tidak ada kolom yang cocok untuk mode ini.");  return pd.DataFrame()
                                 return df[existing]
 
                             if mode == "Semua Kolom":
@@ -573,7 +516,6 @@ with tab1:
                                 ]
                                 st.dataframe(subset(df_view, cols_fpd_psdd).head(2000), use_container_width=True)
 
-                            # ===== Summary TRUE/FALSE =====
                             st.subheader("📊 Comparison Summary (TRUE vs FALSE)")
                             existing_results = [c for c in ["Result_Quantity","Result_FPD","Result_LPD","Result_CRD","Result_PSDD","Result_PODD","Result_PD"] if c in df_view.columns]
                             if existing_results:
@@ -584,7 +526,6 @@ with tab1:
 
                                 summary_df = pd.DataFrame({"Metric": existing_results,"TRUE": true_counts,"FALSE": false_counts,"Total (TRUE+FALSE)": totals,"TRUE %": [round(a,2) for a in acc]})
                                 st.dataframe(summary_df, use_container_width=True)
-
                                 st.bar_chart(summary_df.set_index("Metric")[["TRUE","FALSE"]])
 
                                 false_df_sorted = pd.DataFrame({"Metric": existing_results,"FALSE": false_counts}).sort_values("FALSE", ascending=False).reset_index(drop=True)
@@ -595,13 +536,10 @@ with tab1:
                             else:
                                 st.info("Kolom hasil perbandingan (Result_*) belum tersedia di data final.")
 
-                            # ===== Downloads =====
                             out_name_xlsx = f"PGD Comparison Tracking Report - {today_str_id()}.xlsx"
                             out_name_csv  = f"PGD Comparison Tracking Report - {today_str_id()}.csv"
-
                             df_export = _blank_delay_columns(df_view)
 
-                            # CSV selalu tersedia
                             st.download_button(
                                 label="⬇️ Download CSV (Filtered)",
                                 data=df_export.to_csv(index=False).encode("utf-8"),
@@ -610,7 +548,6 @@ with tab1:
                                 use_container_width=True
                             )
 
-                            # Excel styled: coba, dan beri warning bila openpyxl tidak tersedia
                             try:
                                 excel_bytes = _export_excel_styled(df_export, sheet_name="Report")
                                 st.download_button(
@@ -626,7 +563,7 @@ with tab1:
                             st.info("Atur filter/mode di sidebar, lalu klik **🔄 Execute / Terapkan**.")
             except Exception as e:
                 _status_update(status, label="Terjadi error saat menjalankan aplikasi.", state="error")
-                st.error("Terjadi error saat menjalankan proses. Detail di bawah ini:")
+                st.error("Detail error:")
                 st.exception(e)
     else:
         st.info("Unggah file SAP & Infor di sidebar untuk mulai.")
@@ -635,27 +572,19 @@ with tab1:
 with tab2:
     st.markdown(
         """
-Tempel **daftar PO** di bawah ini (boleh dipisah pakai baris baru, koma, titik koma, atau spasi).
-Aplikasi akan membagi menjadi potongan (chunk) berisi **maksimal 5.000 PO** per bagian (atau sesuai pengaturan).
+Tempel **daftar PO** di bawah ini (boleh pisah baris, koma, titik koma, atau spasi).
+App akan membagi ke potongan berisi **maksimal 5.000 PO** (atau sesuai setting).
 """
     )
 
     with st.expander("⚙️ Opsi Parsing & Normalisasi (opsional)", expanded=False):
         c1, c2, c3, c4, c5 = st.columns(5)
-        split_mode = c1.selectbox(
-            "Mode pemisah",
-            ["auto", "newline", "comma", "semicolon", "whitespace"],
-            help="auto: deteksi otomatis; lainnya pakai delimiter spesifik."
-        )
+        split_mode = c1.selectbox("Mode pemisah", ["auto", "newline", "comma", "semicolon", "whitespace"])
         chunk_size = c2.number_input("Maks. PO per bagian", min_value=1, max_value=1_000_000, value=5000, step=1)
         drop_duplicates = c3.checkbox("Hapus duplikat (jaga urutan pertama)", value=False)
         keep_only_digits = c4.checkbox("Keep only digits (hapus non-digit)", value=False)
         upper_case = c5.checkbox("Upper-case (untuk alfanumerik)", value=False)
-        strip_prefix_suffix = st.checkbox(
-            "Strip prefix/suffix non-alfanumerik",
-            value=False,
-            help="Buang karakter non-alfanumerik di kiri/kanan (contoh: '#PO123,' → 'PO123')"
-        )
+        strip_prefix_suffix = st.checkbox("Strip prefix/suffix non-alfanumerik", value=False)
 
     input_text = st.text_area(
         "Tempel daftar PO di sini:",
@@ -671,15 +600,10 @@ Aplikasi akan membagi menjadi potongan (chunk) berisi **maksimal 5.000 PO** per 
         original_count = len(items)
 
         if keep_only_digits or upper_case or strip_prefix_suffix:
-            items = normalize_items(
-                items,
-                keep_only_digits=keep_only_digits,
-                upper_case=upper_case,
-                strip_prefix_suffix=strip_prefix_suffix,
-            )
+            items = normalize_items(items, keep_only_digits=keep_only_digits, upper_case=upper_case, strip_prefix_suffix=strip_prefix_suffix)
 
         if drop_duplicates:
-            items = list(dict.fromkeys(items))  # jaga urutan
+            items = list(dict.fromkeys(items))  # preserve order
 
         total = len(items)
 
@@ -691,7 +615,7 @@ Aplikasi akan membagi menjadi potongan (chunk) berisi **maksimal 5.000 PO** per 
         c3.metric("Ukuran per bagian", chunk_size)
 
         if total == 0:
-            st.warning("Tidak ada PO yang terdeteksi. Cek kembali input & opsi parsing.")
+            st.warning("Tidak ada PO terdeteksi. Cek input & opsi parsing.")
         else:
             parts = chunk_list(items, int(chunk_size))
             st.success(f"Berhasil dipecah menjadi **{len(parts)}** bagian.")
@@ -703,22 +627,10 @@ Aplikasi akan membagi menjadi potongan (chunk) berisi **maksimal 5.000 PO** per 
             base_txt = f"PO_chunks_txt_{timestamp}"
 
             zip_csv = make_zip_bytes(parts, basename="PO_chunk", as_csv=True)
-            col_zip1.download_button(
-                "Unduh ZIP (CSV)",
-                data=zip_csv,
-                file_name=f"{base_csv}.zip",
-                mime="application/zip",
-                use_container_width=True
-            )
+            col_zip1.download_button("Unduh ZIP (CSV)", data=zip_csv, file_name=f"{base_csv}.zip", mime="application/zip", use_container_width=True)
 
             zip_txt = make_zip_bytes(parts, basename="PO_chunk", as_csv=False)
-            col_zip2.download_button(
-                "Unduh ZIP (TXT)",
-                data=zip_txt,
-                file_name=f"{base_txt}.zip",
-                mime="application/zip",
-                use_container_width=True
-            )
+            col_zip2.download_button("Unduh ZIP (TXT)", data=zip_txt, file_name=f"{base_txt}.zip", mime="application/zip", use_container_width=True)
 
             st.markdown("### 🔎 Pratinjau & Unduh per Bagian")
             colname = "PO"
@@ -729,26 +641,154 @@ Aplikasi akan membagi menjadi potongan (chunk) berisi **maksimal 5.000 PO** per 
 
                     cdl1, cdl2 = st.columns(2)
                     csv_bytes = df.to_csv(index=False).encode("utf-8")
-                    cdl1.download_button(
-                        f"Unduh Bagian {idx} (CSV)",
-                        data=csv_bytes,
-                        file_name=f"PO_chunk_{idx:02d}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
+                    cdl1.download_button(f"Unduh Bagian {idx} (CSV)", data=csv_bytes, file_name=f"PO_chunk_{idx:02d}.csv", mime="text/csv", use_container_width=True)
 
                     txt_bytes = to_txt_bytes(part)
-                    cdl2.download_button(
-                        f"Unduh Bagian {idx} (TXT)",
-                        data=txt_bytes,
-                        file_name=f"PO_chunk_{idx:02d}.txt",
-                        mime="text/plain",
-                        use_container_width=True
-                    )
+                    cdl2.download_button(f"Unduh Bagian {idx} (TXT)", data=txt_bytes, file_name=f"PO_chunk_{idx:02d}.txt", mime="text/plain", use_container_width=True)
 
-            st.info("Tip: Jika tidak genap 5.000, bagian terakhir otomatis berisi sisa PO.")
+            st.info("Tip: Jika tidak genap 5.000, bagian terakhir berisi sisa PO.")
     else:
         st.caption("Siap ketika kamu klik **Proses & Bagi PO**.")
+
+# ------------------ Tab 3: Sales Analytics Dashboard (SAP only) ------------------
+with tab3:
+    st.caption("Upload **SAP Excel (.xlsx)** saja. Dashboard menampilkan KPI & grafik berbasis kolom SAP (Quantity, Unit Price, tanggal CRD/LPD/PD/PO Date, dsb).")
+
+    sap_dash = st.file_uploader("📤 Upload SAP Excel untuk Dashboard (.xlsx)", type=["xlsx"], key="sap_dash_upload")
+
+    if sap_dash:
+        try:
+            sap_df = load_sap(read_excel_file(sap_dash))   # fix Quanity->Quantity + tanggal → datetime
+            # ====== Sidebar Filters ======
+            with st.sidebar:
+                st.header("📈 Dashboard Filters")
+                # Pilihan kolom tanggal untuk time axis
+                date_axis_col = st.selectbox(
+                    "Pilih kolom tanggal sebagai sumbu waktu",
+                    options=[c for c in ["CRD","LPD","PD","PO Date","Document Date","PSDD","FPD","PODD","Actual PGI"] if c in sap_df.columns],
+                    index=0
+                )
+
+                # Rentang tanggal
+                min_d = pd.to_datetime(sap_df[date_axis_col], errors="coerce").min()
+                max_d = pd.to_datetime(sap_df[date_axis_col], errors="coerce").max()
+                sd, ed = st.date_input(
+                    "Rentang tanggal (berdasarkan pilihan sumbu waktu)",
+                    value=(min_d.date() if pd.notna(min_d) else datetime(2025,1,1).date(),
+                           max_d.date() if pd.notna(max_d) else datetime(2025,12,31).date())
+                )
+
+                def options(col):
+                    return sorted([x for x in sap_df[col].dropna().astype(str).unique()]) if col in sap_df.columns else []
+
+                segs   = st.multiselect("Segment", options("Segment"))
+                sites  = st.multiselect("Site", options("Site"))
+                brands = st.multiselect("Brand FTY Name", options("Brand FTY Name"))
+                shipc  = st.multiselect("Ship-to Country", options("Ship-to Country"))
+                cat2   = st.multiselect("Merchandise Category 2", options("Merchandise Category 2"))
+                otype  = st.multiselect("Order Type Description", options("Order Type Description"))
+
+            df = sap_df.copy()
+            df[date_axis_col] = pd.to_datetime(df[date_axis_col], errors="coerce")
+            if sd and ed:
+                df = df[(df[date_axis_col] >= pd.Timestamp(sd)) & (df[date_axis_col] <= pd.Timestamp(ed) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))]
+
+            def apply_multi(col, vals):
+                nonlocal df
+                if vals and col in df.columns:
+                    df = df[df[col].astype(str).isin(vals)]
+            apply_multi("Segment", segs)
+            apply_multi("Site", sites)
+            apply_multi("Brand FTY Name", brands)
+            apply_multi("Ship-to Country", shipc)
+            apply_multi("Merchandise Category 2", cat2)
+            apply_multi("Order Type Description", otype)
+
+            # ====== Metrics ======
+            st.subheader("📊 Key Metrics")
+            df["__Value__"] = (pd.to_numeric(df.get("Unit Price", 0), errors="coerce").fillna(0.0) *
+                               pd.to_numeric(df.get("Quantity", 0), errors="coerce").fillna(0.0))
+            total_orders = df["PO No.(Full)"].nunique() if "PO No.(Full)" in df.columns else len(df)
+            total_qty    = int(pd.to_numeric(df.get("Quantity", 0), errors="coerce").fillna(0).sum())
+            total_value  = float(df["__Value__"].sum())
+            avg_up       = float(pd.to_numeric(df.get("Unit Price", 0), errors="coerce").fillna(0).mean())
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Unique PO", f"{total_orders:,}")
+            c2.metric("Total Quantity", f"{total_qty:,}")
+            c3.metric("Total Value", f"${total_value:,.0f}")
+            c4.metric("Avg Unit Price", f"${avg_up:,.2f}")
+
+            # ====== Charts ======
+            st.subheader("📈 Tren Bulanan")
+            if df[date_axis_col].notna().any():
+                df["_Month"] = df[date_axis_col].dt.to_period("M").dt.to_timestamp()
+                ts = df.groupby("_Month", as_index=False).agg({"Quantity":"sum","__Value__":"sum"})
+                st.line_chart(ts.set_index("_Month")[["Quantity","__Value__"]])
+            else:
+                st.info("Tidak ada nilai tanggal valid untuk membuat tren.")
+
+            colA, colB = st.columns(2)
+
+            with colA:
+                st.subheader("🌍 Top Ship-to Country (Quantity)")
+                if "Ship-to Country" in df.columns:
+                    top_country = (df.groupby("Ship-to Country", as_index=False)["Quantity"]
+                                   .sum().sort_values("Quantity", ascending=False).head(10))
+                    st.bar_chart(top_country.set_index("Ship-to Country")["Quantity"])
+                else:
+                    st.info("Kolom 'Ship-to Country' tidak ada.")
+
+            with colB:
+                st.subheader("👟 Top Model Name (Quantity)")
+                if "Model Name" in df.columns:
+                    top_model = (df.groupby("Model Name", as_index=False)["Quantity"]
+                                 .sum().sort_values("Quantity", ascending=False).head(10))
+                    st.bar_chart(top_model.set_index("Model Name")["Quantity"])
+                else:
+                    st.info("Kolom 'Model Name' tidak ada.")
+
+            st.subheader("⏱️ Distribusi Delay Code (SAP)")
+            cols_delay = [c for c in ["Delay/Early - Confirmation CRD","Delay - PO PSDD Update","Delay - PO PD Update"] if c in df.columns]
+            if cols_delay:
+                for dc in cols_delay:
+                    cnt = (df[dc].astype(str).str.upper().replace({"NAN":"","NULL":"","--":""})
+                           .replace("NAT","").replace("N/A",""))
+                    cnt = cnt[cnt.str.strip()!=""]
+                    if len(cnt) == 0:
+                        st.info(f"{dc}: tidak ada nilai.")
+                        continue
+                    topd = (cnt.value_counts().reset_index())
+                    topd.columns = [dc, "Count"]
+                    st.bar_chart(topd.set_index(dc)["Count"])
+            else:
+                st.info("Kolom delay SAP tidak ditemukan.")
+
+            # ====== Download filtered data (CSV / Excel) ======
+            st.subheader("⬇️ Download Dataset (Filtered)")
+            csv_name = f"SalesAnalytics_SAP_Filtered_{today_str_id()}.csv"
+            xlsx_name = f"SalesAnalytics_SAP_Filtered_{today_str_id()}.xlsx"
+            st.download_button("Download CSV", data=df.drop(columns=["__Value__"], errors="ignore").to_csv(index=False).encode("utf-8"),
+                               file_name=csv_name, mime="text/csv", use_container_width=True)
+
+            try:
+                excel_bytes = _export_excel_styled(df.drop(columns=["__Value__"], errors="ignore"), sheet_name="Sales Analytics")
+                st.download_button("Download Excel (styled)", data=excel_bytes,
+                                   file_name=xlsx_name,
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                   use_container_width=True)
+            except Exception as ex_excel:
+                st.warning(f"Excel styled gagal: {ex_excel}")
+
+            # ====== Preview table ======
+            st.subheader("🔎 Preview Data (max 1.000 rows)")
+            st.dataframe(df.drop(columns=["__Value__"], errors="ignore").head(1000), use_container_width=True)
+
+        except Exception as e:
+            st.error("Gagal memuat/olah file SAP untuk dashboard.")
+            st.exception(e)
+    else:
+        st.info("Unggah 1 file **SAP Excel (.xlsx)** untuk melihat dashboard.")
 
 # ================== Debug Info ==================
 with st.expander("🛠 Debug Info"):
