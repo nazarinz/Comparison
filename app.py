@@ -693,16 +693,22 @@ with tab3:
             if sd and ed:
                 df = df[(df[date_axis_col] >= pd.Timestamp(sd)) & (df[date_axis_col] <= pd.Timestamp(ed) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))]
 
-            def apply_multi(col, vals):
-                nonlocal df
-                if vals and col in df.columns:
-                    df = df[df[col].astype(str).isin(vals)]
-            apply_multi("Segment", segs)
-            apply_multi("Site", sites)
-            apply_multi("Brand FTY Name", brands)
-            apply_multi("Ship-to Country", shipc)
-            apply_multi("Merchandise Category 2", cat2)
-            apply_multi("Order Type Description", otype)
+            # Helper filter tanpa nonlocal: kembalikan df baru
+            def apply_multi(df_in, col, vals):
+                if vals and col in df_in.columns:
+                    return df_in[df_in[col].astype(str).isin(vals)]
+                return df_in
+            
+            # Terapkan berurutan
+            for col, vals in [
+                ("Segment", segs),
+                ("Site", sites),
+                ("Brand FTY Name", brands),
+                ("Ship-to Country", shipc),
+                ("Merchandise Category 2", cat2),
+                ("Order Type Description", otype),
+            ]:
+                df = apply_multi(df, col, vals)
 
             # ====== Metrics ======
             st.subheader("📊 Key Metrics")
