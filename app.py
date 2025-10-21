@@ -161,6 +161,49 @@ def merge_sap_infor(df_sap, df_infor):
         df_infor['Order #'] = df_infor['Order #'].astype(str).str.zfill(10)
     return df_sap.merge(df_infor, how='left', left_on='PO No.(Full)', right_on='Order #')
 
+# ====== Fix: Handle SAP 1 baris vs Infor multi-baris (hindari duplikat Quantity) ======
+def match_qty_nearest(df_sap, df_infor, key="PO No.(Full)", qty_col="Quantity", infor_qty_col="Infor Quantity"):
+    """
+    Jika SAP 1 baris tapi Infor memiliki lebih dari 1 baris:
+    - Pilih baris Infor dengan nilai Quantity paling dekat terhadap Quantity SAP.
+    - Baris lainnya tetap tampil tapi kolom Quantity SAP dikosongkan agar tidak double-count.
+    Jika SAP dan Infor sama-sama punya 2 baris atau lebih → dibiarkan 1:1 (tidak diubah).
+    """
+    # beri ID baris SAP agar (jika suatu saat) SAP multi-row bisa dideteksi
+    df_sap = df_sap.copy()
+    df_sap["___sap_row_id"] = np.arange(len(df_sap))
+
+    merged = df_sap.merge(df_infor, how="left", left_on=key, right_on="Order #")
+    if merged.empty:
+        return merged
+
+    out_rows = []
+    for po, group in merged.groupby(key, sort=False):
+        # hitung banyak baris SAP unik dalam grup ini
+        n_sap_rows = group["___sap_row_id"].nunique() if "___sap_row_id" in group.columns else 1
+
+        # Jika SAP punya >1 baris → biarkan apa adanya (anggap 1:1), tidak usik Quantity
+        if n_sap_rows > 1:
+            out_rows.extend(group.drop(columns=["___sap_row_id"], errors="ignore").to_dict("records"))
+            continue
+
+        # SAP hanya 1 baris, tetapi hasil merge >1 → kosongkan Quantity di baris yang bukan pasangan terdekat
+        if len(group) == 1:
+            out_rows.append(group.drop(columns=["___sap_row_id"], errors="ignore").iloc[0].to_dict())
+            continue
+
+        sap_qty = pd.to_numeric(group.iloc[0].get(qty_col, 0), errors="coerce")
+        diffs = (pd.to_numeric(group.get(infor_qty_col, 0), errors="coerce") - sap_qty).abs()
+        idx_min = diffs.idxmin() if diffs.notna().any() else group.index[0]
+
+        for idx, row in group.iterrows():
+            row = row.copy()
+            if idx != idx_min:
+                row[qty_col] = np.nan  # kosongkan agar tidak double-count
+            out_rows.append(row.drop(labels=["___sap_row_id"], errors="ignore").to_dict())
+
+    return pd.DataFrame(out_rows)
+
 def fill_missing_dates(df):
     df = df.copy()
     df['Order Status Infor'] = df.get('Order Status Infor', pd.Series(dtype=str)).astype(str).str.strip().str.upper()
@@ -276,7 +319,8 @@ def build_report(df_sap, df_infor_raw):
     if df_infor.empty: return pd.DataFrame()
     df_sap2 = convert_date_columns(load_sap(df_sap))
     df_infor2 = convert_date_columns(df_infor)
-    df_merged = merge_sap_infor(df_sap2, df_infor2)
+    # --- merge & fix quantity duplication ---
+    df_merged = match_qty_nearest(df_sap2, df_infor2)
     df_merged = fill_missing_dates(df_merged)
     df_final  = clean_and_compare(df_merged)
     return reorder_columns(df_final, DESIRED_ORDER)
