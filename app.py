@@ -36,8 +36,8 @@ INFOR_COLUMNS_FIXED = [
     "Infor Classification Code","Infor Delay/Early - Confirmation CRD",
     "Infor Delay - PO PSDD Update","Infor Lead time","Infor GPS Country",
     "Infor Ship-to Country","Infor FPD","Infor LPD","Infor CRD","Infor PSDD",
-    "Infor PODD","Infor PD",
-    "Infor Delay - PO PD Update"
+    "Infor PODD","Infor PD","Infor Delay - PO PD Update",
+    "Infor Shipment Method"  # <= baru: ikut diwarnai sebagai kolom Infor
 ]
 
 DELAY_EMPTY_COLUMNS = [
@@ -120,7 +120,8 @@ def process_infor(df_all):
         'Country/Region','Customer Request Date (CRD)','Plan Date','PO Statistical Delivery Date (PSDD)',
         'First Production Date','Last Production Date','PODD','Production Lead Time',
         'Class Code','Delay - Confirmation','Delay - PO Del Update','Quantity',
-        'Delivery Delay Pd'
+        'Delivery Delay Pd',
+        'Shipment Method'  # <= baru: ambil dari Infor
     ]
     missing_cols = [col for col in selected_columns if col not in df_all.columns]
     if missing_cols:
@@ -135,7 +136,8 @@ def process_infor(df_all):
         'Last Production Date':'first','PODD':'first','Production Lead Time':'first',
         'Class Code':'first','Delay - Confirmation':'first','Delay - PO Del Update':'first',
         'Quantity':'sum',
-        'Delivery Delay Pd':'first'
+        'Delivery Delay Pd':'first',
+        'Shipment Method':'first'  # <= baru: agregasi
     })
     df_infor["Order #"] = df_infor["Order #"].astype(str).str.zfill(10).str.strip()
 
@@ -147,7 +149,8 @@ def process_infor(df_all):
         'Last Production Date':'Infor LPD','PODD':'Infor PODD','Production Lead Time':'Infor Lead time',
         'Class Code':'Infor Classification Code','Delay - Confirmation':'Infor Delay/Early - Confirmation CRD',
         'Delay - PO Del Update':'Infor Delay - PO PSDD Update','Quantity':'Infor Quantity',
-        'Delivery Delay Pd':'Infor Delay - PO PD Update'
+        'Delivery Delay Pd':'Infor Delay - PO PD Update',
+        'Shipment Method': 'Infor Shipment Method'  # <= baru: rename output
     }
     df_infor.rename(columns=rename_cols, inplace=True)
     st.info(f"Jumlah baris setelah proses Infor: {len(df_infor)}")
@@ -257,7 +260,8 @@ def clean_and_compare(df_merged):
         "Ship-to-Sort1","Infor GPS Country",
         "Delay/Early - Confirmation CRD","Infor Delay/Early - Confirmation CRD",
         "Delay - PO PSDD Update","Infor Delay - PO PSDD Update",
-        "Delay - PO PD Update","Infor Delay - PO PD Update"
+        "Delay - PO PD Update","Infor Delay - PO PD Update",
+        "Infor Shipment Method"  # <= baru: normalisasi uppercase/strip juga
     ]
     for col in string_cols:
         if col in df_merged.columns:
@@ -303,7 +307,7 @@ DESIRED_ORDER = [
     'MDP','PDP','SDP','Article Lead time','Infor Lead time',
     'Result_Lead Time','Cust Ord No','Ship-to-Sort1','Infor GPS Country','Result_Sort1',
     'Ship-to Country','Infor Ship-to Country','Result_Country',
-    'Ship to Name','Document Date','FPD','Infor FPD','Result_FPD','LPD','Infor LPD',
+    'Ship to Name','Infor Shipment Method','Document Date','FPD','Infor FPD','Result_FPD','LPD','Infor LPD',
     'Result_LPD','CRD','Infor CRD','Result_CRD','PSDD','Infor PSDD','Result_PSDD',
     'FCR Date','PODD','Infor PODD','Result_PODD','PD','Infor PD','Result_PD',
     'PO Date','Actual PGI','Segment','S&P LPD','Currency','Customer PO item'
