@@ -318,16 +318,111 @@ def reorder_columns(df, desired_order):
     tail = [c for c in df.columns if c not in existing]
     return df[existing + tail]
 
+def normalize_po(x):
+    if pd.isna(x):
+        return ""
+    x = str(x).strip()
+    x = re.sub(r"\D", "", x)
+    return x.zfill(10)
+
+
+def process_infor_po_level(df_all):
+    """
+    PO-level aggregation (v5 logic):
+    - Infor Quantity = SUM semua size
+    - 1 PO = 1 baris
+    """
+
+    selected_columns = [
+        'Order #','Order Status','Model Name','Article Number',
+        'Gps Customer Number','Country/Region',
+        'Customer Request Date (CRD)','Plan Date',
+        'PO Statistical Delivery Date (PSDD)',
+        'First Production Date','Last Production Date',
+        'PODD','Production Lead Time','Class Code',
+        'Delay - Confirmation','Delay - PO Del Update',
+        'Delivery Delay Pd','Quantity','Shipment Method'
+    ]
+
+    missing = [c for c in selected_columns if c not in df_all.columns]
+    if missing:
+        st.error(f"Kolom Infor hilang: {missing}")
+        return pd.DataFrame()
+
+    df = df_all[selected_columns].copy()
+    df["Order #"] = df["Order #"].apply(normalize_po)
+
+    df_po = (
+        df.groupby("Order #", as_index=False)
+        .agg({
+            'Order Status':'first',
+            'Model Name':'first',
+            'Article Number':'first',
+            'Gps Customer Number':'first',
+            'Country/Region':'first',
+            'Customer Request Date (CRD)':'first',
+            'Plan Date':'first',
+            'PO Statistical Delivery Date (PSDD)':'first',
+            'First Production Date':'first',
+            'Last Production Date':'first',
+            'PODD':'first',
+            'Production Lead Time':'first',
+            'Class Code':'first',
+            'Delay - Confirmation':'first',
+            'Delay - PO Del Update':'first',
+            'Delivery Delay Pd':'first',
+            'Quantity':'sum',                 # 🔥 PO-level SUM
+            'Shipment Method':'first'
+        })
+    )
+
+    df_po.rename(columns={
+        'Order Status':'Order Status Infor',
+        'Model Name':'Infor Model Name',
+        'Article Number':'Infor Article No',
+        'Gps Customer Number':'Infor GPS Country',
+        'Country/Region':'Infor Ship-to Country',
+        'Customer Request Date (CRD)':'Infor CRD',
+        'Plan Date':'Infor PD',
+        'PO Statistical Delivery Date (PSDD)':'Infor PSDD',
+        'First Production Date':'Infor FPD',
+        'Last Production Date':'Infor LPD',
+        'PODD':'Infor PODD',
+        'Production Lead Time':'Infor Lead time',
+        'Class Code':'Infor Classification Code',
+        'Delay - Confirmation':'Infor Delay/Early - Confirmation CRD',
+        'Delay - PO Del Update':'Infor Delay - PO PSDD Update',
+        'Delivery Delay Pd':'Infor Delay - PO PD Update',
+        'Quantity':'Infor Quantity',
+        'Shipment Method':'Infor Shipment Method'
+    }, inplace=True)
+
+    return convert_date_columns(df_po)
+
+
 def build_report(df_sap, df_infor_raw):
-    df_infor = process_infor(df_infor_raw)
-    if df_infor.empty: return pd.DataFrame()
-    df_sap2 = convert_date_columns(load_sap(df_sap))
-    df_infor2 = convert_date_columns(df_infor)
-    # --- merge & fix quantity duplication ---
-    df_merged = match_qty_nearest(df_sap2, df_infor2)
+    # === SAP ===
+    df_sap2 = load_sap(df_sap)
+    df_sap2["PO No.(Full)"] = df_sap2["PO No.(Full)"].apply(normalize_po)
+
+    # === INFOR (PO LEVEL) ===
+    df_infor = process_infor_po_level(df_infor_raw)
+    if df_infor.empty:
+        return pd.DataFrame()
+
+    # === MERGE PO-LEVEL ===
+    df_merged = df_sap2.merge(
+        df_infor,
+        how="left",
+        left_on="PO No.(Full)",
+        right_on="Order #"
+    )
+
     df_merged = fill_missing_dates(df_merged)
     df_final  = clean_and_compare(df_merged)
+
     return reorder_columns(df_final, DESIRED_ORDER)
+
 
 def _blank_delay_columns(df):
     out = df.copy()
