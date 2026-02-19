@@ -329,35 +329,50 @@ def clean_and_compare(df_merged):
 # ================== Desired Column Order ==================
 DESIRED_ORDER = [
     'Client No', 'Site', 'Brand FTY Name', 'SO', 'Order Type', 'Order Type Description',
-    'PO No.(Full)', 'Order Status Infor', 'PO No.(Short)', 'Merchandise Category 2',
+    'PO No.(Full)', 'Customer PO item', 'Order Status Infor',
+
+    # === Market PO Number (dipindah ke depan) ===
+    'Cust Ord No', 'Infor Market PO Number', 'Result_Market PO',
+
+    'PO No.(Short)', 'Merchandise Category 2',
     'Quantity', 'Infor Quantity', 'Result_Quantity',
+
     'Model Name', 'Infor Model Name', 'Result_Model Name',
     'Article No', 'Infor Article No', 'Result_Article No',
+
     'SAP Material', 'Pattern Code(Up.No.)', 'Model No', 'Outsole Mold',
     'Gender', 'Category 1', 'Category 2', 'Category 3', 'Unit Price',
+
     'Classification Code', 'Infor Classification Code', 'Result_Classification Code',
+
     'DRC',
     'Delay/Early - Confirmation PD',
     'Delay/Early - Confirmation CRD', 'Infor Delay/Early - Confirmation CRD', 'Result_Delay_CRD',
-    'Delay - PO PSDD Update', 'Infor Delay - PO PSDD Update', 'Result_Delay_PSDD',
-    'Delay - PO PD Update', 'Infor Delay - PO PD Update', 'Result_Delay_PD',
+
     'MDP', 'PDP', 'SDP',
+
     'Article Lead time', 'Infor Lead time', 'Result_Lead Time',
-    # === Market PO Number (SAP: Cust Ord No | Infor: Market PO Number) ===
-    'Cust Ord No', 'Infor Market PO Number', 'Result_Market PO',
+
     'Ship-to-Sort1', 'Infor GPS Country', 'Result_Sort1',
     'Ship-to Country', 'Infor Ship-to Country', 'Result_Country',
     'Ship to Name', 'Infor Shipment Method',
+
+    'Delay - PO PSDD Update', 'Infor Delay - PO PSDD Update', 'Result_Delay_PSDD',
+    'Delay - PO PD Update', 'Infor Delay - PO PD Update', 'Result_Delay_PD',
+
     'Document Date',
-    'FPD',  'Infor FPD',  'Result_FPD',
-    'LPD',  'Infor LPD',  'Result_LPD',
-    'CRD',  'Infor CRD',  'Result_CRD',
+
     'PSDD', 'Infor PSDD', 'Result_PSDD',
-    'FCR Date',
+    'LPD',  'Infor LPD',  'Result_LPD',
     'PODD', 'Infor PODD', 'Result_PODD',
+    'FPD',  'Infor FPD',  'Result_FPD',
+    'CRD',  'Infor CRD',  'Result_CRD',
     'PD',   'Infor PD',   'Result_PD',
-    'PO Date', 'Actual PGI', 'Segment', 'S&P LPD', 'Currency', 'Customer PO item',
+
+    'FCR Date',
+    'PO Date', 'Actual PGI', 'Segment', 'S&P LPD', 'Currency'
 ]
+
 
 def reorder_columns(df, desired_order):
     existing = [c for c in desired_order if c in df.columns]
