@@ -37,7 +37,8 @@ INFOR_COLUMNS_FIXED = [
     "Infor Delay - PO PSDD Update","Infor Lead time","Infor GPS Country",
     "Infor Ship-to Country","Infor FPD","Infor LPD","Infor CRD","Infor PSDD",
     "Infor PODD","Infor PD","Infor Delay - PO PD Update",
-    "Infor Shipment Method"  # <= baru: ikut diwarnai sebagai kolom Infor
+    "Infor Shipment Method",
+    "Infor Market PO Number"  # <= baru
 ]
 
 DELAY_EMPTY_COLUMNS = [
@@ -121,7 +122,8 @@ def process_infor(df_all):
         'First Production Date','Last Production Date','PODD','Production Lead Time',
         'Class Code','Delay - Confirmation','Delay - PO Del Update','Quantity',
         'Delivery Delay Pd',
-        'Shipment Method'  # <= baru: ambil dari Infor
+        'Shipment Method',
+        'Market PO Number'  # <= baru
     ]
     missing_cols = [col for col in selected_columns if col not in df_all.columns]
     if missing_cols:
@@ -137,7 +139,8 @@ def process_infor(df_all):
         'Class Code':'first','Delay - Confirmation':'first','Delay - PO Del Update':'first',
         'Quantity':'sum',
         'Delivery Delay Pd':'first',
-        'Shipment Method':'first'  # <= baru: agregasi
+        'Shipment Method':'first',
+        'Market PO Number':'first'  # <= baru
     })
     df_infor["Order #"] = df_infor["Order #"].astype(str).str.zfill(10).str.strip()
 
@@ -150,7 +153,8 @@ def process_infor(df_all):
         'Class Code':'Infor Classification Code','Delay - Confirmation':'Infor Delay/Early - Confirmation CRD',
         'Delay - PO Del Update':'Infor Delay - PO PSDD Update','Quantity':'Infor Quantity',
         'Delivery Delay Pd':'Infor Delay - PO PD Update',
-        'Shipment Method': 'Infor Shipment Method'  # <= baru: rename output
+        'Shipment Method': 'Infor Shipment Method',
+        'Market PO Number': 'Infor Market PO Number'  # <= baru
     }
     df_infor.rename(columns=rename_cols, inplace=True)
     st.info(f"Jumlah baris setelah proses Infor: {len(df_infor)}")
@@ -166,13 +170,6 @@ def merge_sap_infor(df_sap, df_infor):
 
 # ====== Fix: Handle SAP 1 baris vs Infor multi-baris (hindari duplikat Quantity) ======
 def match_qty_nearest(df_sap, df_infor, key="PO No.(Full)", qty_col="Quantity", infor_qty_col="Infor Quantity"):
-    """
-    Jika SAP 1 baris tapi Infor memiliki lebih dari 1 baris:
-    - Pilih baris Infor dengan nilai Quantity paling dekat terhadap Quantity SAP.
-    - Baris lainnya tetap tampil tapi kolom Quantity SAP dikosongkan agar tidak double-count.
-    Jika SAP dan Infor sama-sama punya 2 baris atau lebih → dibiarkan 1:1 (tidak diubah).
-    """
-    # beri ID baris SAP agar (jika suatu saat) SAP multi-row bisa dideteksi
     df_sap = df_sap.copy()
     df_sap["___sap_row_id"] = np.arange(len(df_sap))
 
@@ -182,15 +179,12 @@ def match_qty_nearest(df_sap, df_infor, key="PO No.(Full)", qty_col="Quantity", 
 
     out_rows = []
     for po, group in merged.groupby(key, sort=False):
-        # hitung banyak baris SAP unik dalam grup ini
         n_sap_rows = group["___sap_row_id"].nunique() if "___sap_row_id" in group.columns else 1
 
-        # Jika SAP punya >1 baris → biarkan apa adanya (anggap 1:1), tidak usik Quantity
         if n_sap_rows > 1:
             out_rows.extend(group.drop(columns=["___sap_row_id"], errors="ignore").to_dict("records"))
             continue
 
-        # SAP hanya 1 baris, tetapi hasil merge >1 → kosongkan Quantity di baris yang bukan pasangan terdekat
         if len(group) == 1:
             out_rows.append(group.drop(columns=["___sap_row_id"], errors="ignore").iloc[0].to_dict())
             continue
@@ -202,7 +196,7 @@ def match_qty_nearest(df_sap, df_infor, key="PO No.(Full)", qty_col="Quantity", 
         for idx, row in group.iterrows():
             row = row.copy()
             if idx != idx_min:
-                row[qty_col] = np.nan  # kosongkan agar tidak double-count
+                row[qty_col] = np.nan
             out_rows.append(row.drop(labels=["___sap_row_id"], errors="ignore").to_dict())
 
     return pd.DataFrame(out_rows)
@@ -261,7 +255,7 @@ def clean_and_compare(df_merged):
         "Delay/Early - Confirmation CRD","Infor Delay/Early - Confirmation CRD",
         "Delay - PO PSDD Update","Infor Delay - PO PSDD Update",
         "Delay - PO PD Update","Infor Delay - PO PD Update",
-        "Infor Shipment Method"  # <= baru: normalisasi uppercase/strip juga
+        "Infor Shipment Method"
     ]
     for col in string_cols:
         if col in df_merged.columns:
@@ -270,6 +264,24 @@ def clean_and_compare(df_merged):
         df_merged["Ship-to-Sort1"] = df_merged["Ship-to-Sort1"].astype(str).str.replace(".0","", regex=False)
     if "Infor GPS Country" in df_merged.columns:
         df_merged["Infor GPS Country"] = df_merged["Infor GPS Country"].astype(str).str.replace(".0","", regex=False)
+
+    # ===== Normalisasi Market PO Number vs Cust Ord No (zero-pad ke 10 digit) =====
+    if "Cust Ord No" in df_merged.columns:
+        df_merged["Cust Ord No"] = (
+            df_merged["Cust Ord No"]
+            .astype(str).str.strip()
+            .str.replace(r"\D", "", regex=True)
+            .str.zfill(10)
+            .replace("0000000000", "")  # handle NaN / kosong
+        )
+    if "Infor Market PO Number" in df_merged.columns:
+        df_merged["Infor Market PO Number"] = (
+            df_merged["Infor Market PO Number"]
+            .astype(str).str.strip()
+            .str.replace(r"\D", "", regex=True)
+            .str.zfill(10)
+            .replace("0000000000", "")  # handle NaN / kosong
+        )
 
     def safe_result(c1, c2):
         if c1 in df_merged.columns and c2 in df_merged.columns:
@@ -292,6 +304,7 @@ def clean_and_compare(df_merged):
     df_merged["Result_PSDD"]                = safe_result("PSDD","Infor PSDD")
     df_merged["Result_PODD"]                = safe_result("PODD","Infor PODD")
     df_merged["Result_PD"]                  = safe_result("PD","Infor PD")
+    df_merged["Result_Market PO"]           = safe_result("Cust Ord No","Infor Market PO Number")  # <= baru
     return df_merged
 
 DESIRED_ORDER = [
@@ -305,7 +318,8 @@ DESIRED_ORDER = [
     'Result_Delay_CRD','Delay - PO PSDD Update','Infor Delay - PO PSDD Update','Result_Delay_PSDD',
     'Delay - PO PD Update','Infor Delay - PO PD Update','Result_Delay_PD',
     'MDP','PDP','SDP','Article Lead time','Infor Lead time',
-    'Result_Lead Time','Cust Ord No','Ship-to-Sort1','Infor GPS Country','Result_Sort1',
+    'Result_Lead Time','Cust Ord No','Infor Market PO Number','Result_Market PO',  # <= baru: Cust Ord No diikuti kolom Infor & Result
+    'Ship-to-Sort1','Infor GPS Country','Result_Sort1',
     'Ship-to Country','Infor Ship-to Country','Result_Country',
     'Ship to Name','Infor Shipment Method','Document Date','FPD','Infor FPD','Result_FPD','LPD','Infor LPD',
     'Result_LPD','CRD','Infor CRD','Result_CRD','PSDD','Infor PSDD','Result_PSDD',
@@ -341,7 +355,8 @@ def process_infor_po_level(df_all):
         'First Production Date','Last Production Date',
         'PODD','Production Lead Time','Class Code',
         'Delay - Confirmation','Delay - PO Del Update',
-        'Delivery Delay Pd','Quantity','Shipment Method'
+        'Delivery Delay Pd','Quantity','Shipment Method',
+        'Market PO Number'  # <= baru
     ]
 
     missing = [c for c in selected_columns if c not in df_all.columns]
@@ -372,7 +387,8 @@ def process_infor_po_level(df_all):
             'Delay - PO Del Update':'first',
             'Delivery Delay Pd':'first',
             'Quantity':'sum',                 # 🔥 PO-level SUM
-            'Shipment Method':'first'
+            'Shipment Method':'first',
+            'Market PO Number':'first'        # <= baru
         })
     )
 
@@ -394,7 +410,8 @@ def process_infor_po_level(df_all):
         'Delay - PO Del Update':'Infor Delay - PO PSDD Update',
         'Delivery Delay Pd':'Infor Delay - PO PD Update',
         'Quantity':'Infor Quantity',
-        'Shipment Method':'Infor Shipment Method'
+        'Shipment Method':'Infor Shipment Method',
+        'Market PO Number':'Infor Market PO Number'  # <= baru
     }, inplace=True)
 
     return convert_date_columns(df_po)
@@ -592,7 +609,10 @@ with tab1:
                             po_opts = uniq_vals(final_df, "PO No.(Full)")
                             selected_pos = st.multiselect("PO No.(Full)", options=po_opts, placeholder="Pilih PO (opsional)")
 
-                            result_cols = ["Result_Quantity","Result_FPD","Result_LPD","Result_CRD","Result_PSDD","Result_PODD","Result_PD"]
+                            result_cols = [
+                                "Result_Quantity","Result_FPD","Result_LPD","Result_CRD",
+                                "Result_PSDD","Result_PODD","Result_PD","Result_Market PO"  # <= baru
+                            ]
                             result_selections = {}
                             for col in result_cols:
                                 opts = uniq_vals(final_df, col)
@@ -660,7 +680,12 @@ with tab1:
                                 st.dataframe(subset(df_view, cols_fpd_psdd).head(2000), use_container_width=True)
 
                             st.subheader("📊 Comparison Summary (TRUE vs FALSE)")
-                            existing_results = [c for c in ["Result_Quantity","Result_FPD","Result_LPD","Result_CRD","Result_PSDD","Result_PODD","Result_PD"] if c in df_view.columns]
+                            existing_results = [
+                                c for c in [
+                                    "Result_Quantity","Result_FPD","Result_LPD","Result_CRD",
+                                    "Result_PSDD","Result_PODD","Result_PD","Result_Market PO"  # <= baru
+                                ] if c in df_view.columns
+                            ]
                             if existing_results:
                                 true_counts  = [int(df_view[c].eq("TRUE").sum()) for c in existing_results]
                                 false_counts = [int(df_view[c].eq("FALSE").sum()) for c in existing_results]
