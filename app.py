@@ -54,6 +54,71 @@ DATE_COLUMNS_PREF = [
     "Infor FPD","Infor LPD","Infor CRD","Infor PSDD","Infor PODD","Infor PD",
 ]
 
+# ================== Country Name Normalization ==================
+# Key = nilai SAP (uppercase), Value = nilai Infor (uppercase)
+COUNTRY_NAME_MAP = {
+    # Americas
+    "USA":                          "UNITED STATES",
+    "U.S.A.":                       "UNITED STATES",
+    "US":                           "UNITED STATES",
+    "UNITED STATES OF AMERICA":     "UNITED STATES",
+
+    # Middle East
+    "UTD.ARAB EMIR.":               "UNITED ARAB EMIRATES",
+    "U.A.E.":                       "UNITED ARAB EMIRATES",
+    "UAE":                          "UNITED ARAB EMIRATES",
+
+    # Asia — Korea
+    "SOUTH KOREA":                  "KOREA",
+    "REPUBLIC OF KOREA":            "KOREA",
+    "KOREA, REPUBLIC OF":           "KOREA",
+    "KOREA, SOUTH":                 "KOREA",
+
+    # Asia — China / HK / TW / Macau
+    "HONG KONG-CHINA":              "CHINA",
+    "HONG KONG":                    "CHINA",
+    "HK":                           "CHINA",
+    "TAIWAN":                       "CHINA",
+    "TAIWAN-CHINA":                 "CHINA",
+    "PEOPLES REP. OF CHINA":        "CHINA",
+    "CHINA, PEOPLES REP.":          "CHINA",
+    "PEOPLE'S REPUBLIC OF CHINA":   "CHINA",
+    "P.R. CHINA":                   "CHINA",
+    "MACAU":                        "CHINA",
+    "MACAO":                        "CHINA",
+
+    # Asia — Others
+    "VIET NAM":                     "VIETNAM",
+    "VIET NAM, SOC. REP.":          "VIETNAM",
+    "PHILIPPINEN":                  "PHILIPPINES",
+    "PHILLIPINES":                  "PHILIPPINES",
+
+    # Europe / Türkiye
+    "TURKEY":                       "TURKIYE",
+    "TÜRKIYE":                      "TURKIYE",
+    "TURKEI":                       "TURKIYE",
+
+    # Europe — Others
+    "GREAT BRITAIN":                "UNITED KINGDOM",
+    "UK":                           "UNITED KINGDOM",
+    "ENGLAND":                      "UNITED KINGDOM",
+    "CZECH REPUBLIC":               "CZECHIA",
+    "CZECH REP.":                   "CZECHIA",
+
+    # Middle East — Others
+    "SAUDI-ARABIA":                 "SAUDI ARABIA",
+    "SAUDI ARABIEN":                "SAUDI ARABIA",
+
+    # Add more as needed — key=SAP uppercase, value=Infor uppercase
+}
+
+def normalize_country(x):
+    """Normalisasi nama negara SAP → format Infor. Return uppercase original jika tidak ada di mapping."""
+    if pd.isna(x):
+        return ""
+    s = str(x).strip().upper()
+    return COUNTRY_NAME_MAP.get(s, s)
+
 # ================== Helpers (Umum) ==================
 def today_str_id():
     return (datetime.utcnow() + timedelta(hours=7)).strftime("%Y%m%d")
@@ -146,11 +211,10 @@ def normalize_market_po(x):
     s = str(x).strip()
     if not s or s.lower() in ("nan", "none", "null", ""):
         return ""
-    # ← KUNCI FIX: konversi float string ke int string sebelum strip digit
     try:
         s = str(int(float(s)))
     except (ValueError, TypeError):
-        pass  # biarkan s apa adanya, lanjut strip digit
+        pass
     digits = re.sub(r"\D", "", s)
     if not digits:
         return ""
@@ -284,11 +348,13 @@ def clean_and_compare(df_merged):
                 df_merged[col].replace(['--', 'N/A', 'NULL'], pd.NA).apply(map_code_safely)
             )
 
+    # Kolom string biasa — upper + strip
+    # Ship-to Country SAP dipisah → pakai normalize_country (mapping ke format Infor)
     string_cols = [
         "Model Name", "Infor Model Name",
         "Article No", "Infor Article No",
         "Classification Code", "Infor Classification Code",
-        "Ship-to Country", "Infor Ship-to Country",
+        "Infor Ship-to Country",                              # ← Infor: upper saja
         "Ship-to-Sort1", "Infor GPS Country",
         "Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD",
         "Delay - PO PSDD Update", "Infor Delay - PO PSDD Update",
@@ -299,6 +365,10 @@ def clean_and_compare(df_merged):
         if col in df_merged.columns:
             df_merged[col] = df_merged[col].astype(str).str.strip().str.upper()
 
+    # ← Normalisasi khusus: Ship-to Country SAP → format Infor (via COUNTRY_NAME_MAP)
+    if "Ship-to Country" in df_merged.columns:
+        df_merged["Ship-to Country"] = df_merged["Ship-to Country"].apply(normalize_country)
+
     if "Ship-to-Sort1" in df_merged.columns:
         df_merged["Ship-to-Sort1"] = (
             df_merged["Ship-to-Sort1"].astype(str).str.replace(".0", "", regex=False)
@@ -308,7 +378,7 @@ def clean_and_compare(df_merged):
             df_merged["Infor GPS Country"].astype(str).str.replace(".0", "", regex=False)
         )
 
-    # ===== Normalisasi Market PO Number vs Cust Ord No (zero-pad ke 10 digit) =====
+    # Normalisasi Market PO Number (fix float string → int string → zfill 10)
     if "Cust Ord No" in df_merged.columns:
         df_merged["Cust Ord No"] = df_merged["Cust Ord No"].apply(normalize_market_po)
     if "Infor Market PO Number" in df_merged.columns:
@@ -319,24 +389,24 @@ def clean_and_compare(df_merged):
             return np.where(df_merged[c1] == df_merged[c2], "TRUE", "FALSE")
         return ["COLUMN MISSING"] * len(df_merged)
 
-    df_merged["Result_Quantity"]            = safe_result("Quantity",                         "Infor Quantity")
-    df_merged["Result_Model Name"]          = safe_result("Model Name",                       "Infor Model Name")
-    df_merged["Result_Article No"]          = safe_result("Article No",                       "Infor Article No")
-    df_merged["Result_Classification Code"] = safe_result("Classification Code",              "Infor Classification Code")
-    df_merged["Result_Delay_CRD"]           = safe_result("Delay/Early - Confirmation CRD",  "Infor Delay/Early - Confirmation CRD")
-    df_merged["Result_Delay_PSDD"]          = safe_result("Delay - PO PSDD Update",           "Infor Delay - PO PSDD Update")
-    df_merged["Result_Delay_PD"]            = safe_result("Delay - PO PD Update",             "Infor Delay - PO PD Update")
-    df_merged["Result_Lead Time"]           = safe_result("Article Lead time",                "Infor Lead time")
-    df_merged["Result_Country"]             = safe_result("Ship-to Country",                  "Infor Ship-to Country")
-    df_merged["Result_Sort1"]               = safe_result("Ship-to-Sort1",                    "Infor GPS Country")
-    df_merged["Result_FPD"]                 = safe_result("FPD",                              "Infor FPD")
-    df_merged["Result_LPD"]                 = safe_result("LPD",                              "Infor LPD")
-    df_merged["Result_CRD"]                 = safe_result("CRD",                              "Infor CRD")
-    df_merged["Result_PSDD"]                = safe_result("PSDD",                             "Infor PSDD")
-    df_merged["Result_PODD"]                = safe_result("PODD",                             "Infor PODD")
-    df_merged["Result_PD"]                  = safe_result("PD",                               "Infor PD")
-    df_merged["Result_Market PO"]           = safe_result("Cust Ord No",                      "Infor Market PO Number")
-    df_merged["Result_Shipment Method"]     = safe_result("Shipment Method",                  "Infor Shipment Method")  # ← baru
+    df_merged["Result_Quantity"]            = safe_result("Quantity",                        "Infor Quantity")
+    df_merged["Result_Model Name"]          = safe_result("Model Name",                      "Infor Model Name")
+    df_merged["Result_Article No"]          = safe_result("Article No",                      "Infor Article No")
+    df_merged["Result_Classification Code"] = safe_result("Classification Code",             "Infor Classification Code")
+    df_merged["Result_Delay_CRD"]           = safe_result("Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD")
+    df_merged["Result_Delay_PSDD"]          = safe_result("Delay - PO PSDD Update",          "Infor Delay - PO PSDD Update")
+    df_merged["Result_Delay_PD"]            = safe_result("Delay - PO PD Update",            "Infor Delay - PO PD Update")
+    df_merged["Result_Lead Time"]           = safe_result("Article Lead time",               "Infor Lead time")
+    df_merged["Result_Country"]             = safe_result("Ship-to Country",                 "Infor Ship-to Country")
+    df_merged["Result_Sort1"]               = safe_result("Ship-to-Sort1",                   "Infor GPS Country")
+    df_merged["Result_FPD"]                 = safe_result("FPD",                             "Infor FPD")
+    df_merged["Result_LPD"]                 = safe_result("LPD",                             "Infor LPD")
+    df_merged["Result_CRD"]                 = safe_result("CRD",                             "Infor CRD")
+    df_merged["Result_PSDD"]                = safe_result("PSDD",                            "Infor PSDD")
+    df_merged["Result_PODD"]                = safe_result("PODD",                            "Infor PODD")
+    df_merged["Result_PD"]                  = safe_result("PD",                              "Infor PD")
+    df_merged["Result_Market PO"]           = safe_result("Cust Ord No",                     "Infor Market PO Number")
+    df_merged["Result_Shipment Method"]     = safe_result("Shipment Method",                 "Infor Shipment Method")
 
     return df_merged
 
@@ -369,14 +439,14 @@ DESIRED_ORDER = [
     'Ship-to-Sort1', 'Infor GPS Country', 'Result_Sort1',
     'Ship-to Country', 'Infor Ship-to Country', 'Result_Country',
     'Ship to Name',
-    'Shipment Method', 'Infor Shipment Method', 'Result_Shipment Method',  # ← urutan baru + result baru
+    'Shipment Method', 'Infor Shipment Method', 'Result_Shipment Method',
 
     'Delay - PO PSDD Update', 'Infor Delay - PO PSDD Update', 'Result_Delay_PSDD',
     'Delay - PO PD Update', 'Infor Delay - PO PD Update', 'Result_Delay_PD',
 
     'Document Date',
 
-    'PODD', 'Infor PODD', 'Result_PODD',   # ← urutan tanggal: PODD dulu
+    'PODD', 'Infor PODD', 'Result_PODD',
     'LPD',  'Infor LPD',  'Result_LPD',
     'PSDD', 'Infor PSDD', 'Result_PSDD',
     'FPD',  'Infor FPD',  'Result_FPD',
@@ -582,6 +652,15 @@ with tab1:
                     else:
                         _status_update(status, label="Report siap! ✅", state="complete")
 
+                        # ── Expander: Country Mapping Info ──────────────────────
+                        with st.expander("🗺️ Country Normalization Map (SAP → Infor)", expanded=False):
+                            map_df = pd.DataFrame(
+                                list(COUNTRY_NAME_MAP.items()),
+                                columns=["SAP (original)", "Infor (normalized)"]
+                            )
+                            st.dataframe(map_df, use_container_width=True, hide_index=True)
+                            st.caption("Tambahkan mapping baru di COUNTRY_NAME_MAP jika ada negara yang belum terdaftar.")
+
                         with st.sidebar.form("filters_form"):
                             st.header("🔎 Filters & Mode")
 
@@ -600,6 +679,7 @@ with tab1:
                                 "Result_PSDD", "Result_PODD", "Result_PD",
                                 "Result_Market PO",
                                 "Result_Shipment Method",
+                                "Result_Country",
                             ]
                             result_selections = {}
                             for col in result_cols:
@@ -678,7 +758,8 @@ with tab1:
                                 c for c in [
                                     "Result_Quantity",
                                     "Result_Market PO",
-                                    "Result_Shipment Method",  # ← baru
+                                    "Result_Shipment Method",
+                                    "Result_Country",
                                     "Result_FPD", "Result_LPD", "Result_CRD",
                                     "Result_PSDD", "Result_PODD", "Result_PD",
                                 ] if c in df_view.columns
