@@ -38,7 +38,7 @@ INFOR_COLUMNS_FIXED = [
     "Infor Ship-to Country","Infor FPD","Infor LPD","Infor CRD","Infor PSDD",
     "Infor PODD","Infor PD","Infor Delay - PO PD Update",
     "Infor Shipment Method",
-    "Infor Market PO Number",  # <= kolom baru
+    "Infor Market PO Number",
 ]
 
 DELAY_EMPTY_COLUMNS = [
@@ -68,9 +68,9 @@ def _status_update(ctx, label=None, state=None):
     if hasattr(ctx, "update"):
         ctx.update(label=label, state=state)
     else:
-        if state == "error":    st.error(label or "")
+        if state == "error":      st.error(label or "")
         elif state == "complete": st.success(label or "")
-        else:                   st.info(label or "")
+        else:                     st.info(label or "")
 
 @st.cache_data(show_spinner=False)
 def read_excel_file(file):
@@ -110,7 +110,6 @@ def load_infor_from_many_csv(csv_dfs):
     data_list = []
     required_cols = ['PO Statistical Delivery Date (PSDD)', 'Customer Request Date (CRD)', 'Line Aggregator']
     for i, df in enumerate(csv_dfs, start=1):
-        # Strip semua nama kolom dari whitespace tersembunyi
         df.columns = df.columns.str.strip()
         if all(col in df.columns for col in required_cols):
             data_list.append(df)
@@ -126,17 +125,35 @@ def normalize_po(x):
     """Normalize PO number: strip non-digit, zero-pad ke 10 digit."""
     if pd.isna(x):
         return ""
-    x = str(x).strip()
-    x = re.sub(r"\D", "", x)
-    return x.zfill(10)
+    s = str(x).strip()
+    if not s or s.lower() in ("nan", "none", "null"):
+        return ""
+    try:
+        s = str(int(float(s)))
+    except (ValueError, TypeError):
+        pass
+    digits = re.sub(r"\D", "", s)
+    return digits.zfill(10)
 
 def normalize_market_po(x):
-    """Zero-pad Market PO Number ke 10 digit (strip non-digit dulu). Return '' jika kosong."""
+    """
+    Zero-pad Market PO Number ke 10 digit.
+    FIX: handle float string seperti '304821089.0' → int dulu → '304821089' → zfill → '0304821089'
+    Return '' jika kosong.
+    """
+    if pd.isna(x):
+        return ""
     s = str(x).strip()
+    if not s or s.lower() in ("nan", "none", "null", ""):
+        return ""
+    # ← KUNCI FIX: konversi float string ke int string sebelum strip digit
+    try:
+        s = str(int(float(s)))
+    except (ValueError, TypeError):
+        pass  # biarkan s apa adanya, lanjut strip digit
     digits = re.sub(r"\D", "", s)
     if not digits:
         return ""
-    # Kalau semua digit adalah 0 (misal dari NaN yang dikonversi), kembalikan kosong
     if all(c == "0" for c in digits):
         return ""
     return digits.zfill(10)
@@ -148,7 +165,6 @@ def process_infor_po_level(df_all):
     - Infor Quantity = SUM semua size (1 PO = 1 baris)
     - Market PO Number diambil & di-rename ke Infor Market PO Number
     """
-    # Strip whitespace dari semua nama kolom (jaga-jaga ada spasi/karakter tersembunyi)
     df_all = df_all.copy()
     df_all.columns = df_all.columns.str.strip()
 
@@ -161,7 +177,7 @@ def process_infor_po_level(df_all):
         'PODD', 'Production Lead Time', 'Class Code',
         'Delay - Confirmation', 'Delay - PO Del Update',
         'Delivery Delay Pd', 'Quantity', 'Shipment Method',
-        'Market PO Number',  # <= kolom baru
+        'Market PO Number',
     ]
 
     missing = [c for c in selected_columns if c not in df_all.columns]
@@ -192,9 +208,9 @@ def process_infor_po_level(df_all):
             'Delay - Confirmation':                'first',
             'Delay - PO Del Update':               'first',
             'Delivery Delay Pd':                   'first',
-            'Quantity':                            'sum',    # PO-level SUM
+            'Quantity':                            'sum',
             'Shipment Method':                     'first',
-            'Market PO Number':                    'first',  # <= kolom baru
+            'Market PO Number':                    'first',
         })
     )
 
@@ -217,7 +233,7 @@ def process_infor_po_level(df_all):
         'Delivery Delay Pd':                   'Infor Delay - PO PD Update',
         'Quantity':                            'Infor Quantity',
         'Shipment Method':                     'Infor Shipment Method',
-        'Market PO Number':                    'Infor Market PO Number',  # <= kolom baru
+        'Market PO Number':                    'Infor Market PO Number',
     }, inplace=True)
 
     return convert_date_columns(df_po)
@@ -277,7 +293,7 @@ def clean_and_compare(df_merged):
         "Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD",
         "Delay - PO PSDD Update", "Infor Delay - PO PSDD Update",
         "Delay - PO PD Update", "Infor Delay - PO PD Update",
-        "Infor Shipment Method",
+        "Shipment Method", "Infor Shipment Method",
     ]
     for col in string_cols:
         if col in df_merged.columns:
@@ -293,9 +309,6 @@ def clean_and_compare(df_merged):
         )
 
     # ===== Normalisasi Market PO Number vs Cust Ord No (zero-pad ke 10 digit) =====
-    # SAP  : Cust Ord No       → misal "0303638322" (sudah 10 digit)
-    # Infor: Market PO Number  → misal "303638322"  (9 digit, perlu di-pad)
-    # Keduanya di-normalize agar apple-to-apple sebelum dibandingkan.
     if "Cust Ord No" in df_merged.columns:
         df_merged["Cust Ord No"] = df_merged["Cust Ord No"].apply(normalize_market_po)
     if "Infor Market PO Number" in df_merged.columns:
@@ -306,23 +319,24 @@ def clean_and_compare(df_merged):
             return np.where(df_merged[c1] == df_merged[c2], "TRUE", "FALSE")
         return ["COLUMN MISSING"] * len(df_merged)
 
-    df_merged["Result_Quantity"]            = safe_result("Quantity",                          "Infor Quantity")
-    df_merged["Result_Model Name"]          = safe_result("Model Name",                        "Infor Model Name")
-    df_merged["Result_Article No"]          = safe_result("Article No",                        "Infor Article No")
-    df_merged["Result_Classification Code"] = safe_result("Classification Code",               "Infor Classification Code")
-    df_merged["Result_Delay_CRD"]           = safe_result("Delay/Early - Confirmation CRD",   "Infor Delay/Early - Confirmation CRD")
-    df_merged["Result_Delay_PSDD"]          = safe_result("Delay - PO PSDD Update",            "Infor Delay - PO PSDD Update")
-    df_merged["Result_Delay_PD"]            = safe_result("Delay - PO PD Update",              "Infor Delay - PO PD Update")
-    df_merged["Result_Lead Time"]           = safe_result("Article Lead time",                 "Infor Lead time")
-    df_merged["Result_Country"]             = safe_result("Ship-to Country",                   "Infor Ship-to Country")
-    df_merged["Result_Sort1"]               = safe_result("Ship-to-Sort1",                     "Infor GPS Country")
-    df_merged["Result_FPD"]                 = safe_result("FPD",                               "Infor FPD")
-    df_merged["Result_LPD"]                 = safe_result("LPD",                               "Infor LPD")
-    df_merged["Result_CRD"]                 = safe_result("CRD",                               "Infor CRD")
-    df_merged["Result_PSDD"]                = safe_result("PSDD",                              "Infor PSDD")
-    df_merged["Result_PODD"]                = safe_result("PODD",                              "Infor PODD")
-    df_merged["Result_PD"]                  = safe_result("PD",                                "Infor PD")
-    df_merged["Result_Market PO"]           = safe_result("Cust Ord No",                       "Infor Market PO Number")  # <= kolom baru
+    df_merged["Result_Quantity"]            = safe_result("Quantity",                         "Infor Quantity")
+    df_merged["Result_Model Name"]          = safe_result("Model Name",                       "Infor Model Name")
+    df_merged["Result_Article No"]          = safe_result("Article No",                       "Infor Article No")
+    df_merged["Result_Classification Code"] = safe_result("Classification Code",              "Infor Classification Code")
+    df_merged["Result_Delay_CRD"]           = safe_result("Delay/Early - Confirmation CRD",  "Infor Delay/Early - Confirmation CRD")
+    df_merged["Result_Delay_PSDD"]          = safe_result("Delay - PO PSDD Update",           "Infor Delay - PO PSDD Update")
+    df_merged["Result_Delay_PD"]            = safe_result("Delay - PO PD Update",             "Infor Delay - PO PD Update")
+    df_merged["Result_Lead Time"]           = safe_result("Article Lead time",                "Infor Lead time")
+    df_merged["Result_Country"]             = safe_result("Ship-to Country",                  "Infor Ship-to Country")
+    df_merged["Result_Sort1"]               = safe_result("Ship-to-Sort1",                    "Infor GPS Country")
+    df_merged["Result_FPD"]                 = safe_result("FPD",                              "Infor FPD")
+    df_merged["Result_LPD"]                 = safe_result("LPD",                              "Infor LPD")
+    df_merged["Result_CRD"]                 = safe_result("CRD",                              "Infor CRD")
+    df_merged["Result_PSDD"]                = safe_result("PSDD",                             "Infor PSDD")
+    df_merged["Result_PODD"]                = safe_result("PODD",                             "Infor PODD")
+    df_merged["Result_PD"]                  = safe_result("PD",                               "Infor PD")
+    df_merged["Result_Market PO"]           = safe_result("Cust Ord No",                      "Infor Market PO Number")
+    df_merged["Result_Shipment Method"]     = safe_result("Shipment Method",                  "Infor Shipment Method")  # ← baru
 
     return df_merged
 
@@ -331,7 +345,6 @@ DESIRED_ORDER = [
     'Client No', 'Site', 'Brand FTY Name', 'SO', 'Order Type', 'Order Type Description',
     'PO No.(Full)', 'Customer PO item', 'Order Status Infor',
 
-    # === Market PO Number (dipindah ke depan) ===
     'Cust Ord No', 'Infor Market PO Number', 'Result_Market PO',
 
     'PO No.(Short)', 'Merchandise Category 2',
@@ -355,16 +368,17 @@ DESIRED_ORDER = [
 
     'Ship-to-Sort1', 'Infor GPS Country', 'Result_Sort1',
     'Ship-to Country', 'Infor Ship-to Country', 'Result_Country',
-    'Ship to Name', 'Infor Shipment Method',
+    'Ship to Name',
+    'Shipment Method', 'Infor Shipment Method', 'Result_Shipment Method',  # ← urutan baru + result baru
 
     'Delay - PO PSDD Update', 'Infor Delay - PO PSDD Update', 'Result_Delay_PSDD',
     'Delay - PO PD Update', 'Infor Delay - PO PD Update', 'Result_Delay_PD',
 
     'Document Date',
 
-    'PSDD', 'Infor PSDD', 'Result_PSDD',
+    'PODD', 'Infor PODD', 'Result_PODD',   # ← urutan tanggal: PODD dulu
     'LPD',  'Infor LPD',  'Result_LPD',
-    'PODD', 'Infor PODD', 'Result_PODD',
+    'PSDD', 'Infor PSDD', 'Result_PSDD',
     'FPD',  'Infor FPD',  'Result_FPD',
     'CRD',  'Infor CRD',  'Result_CRD',
     'PD',   'Infor PD',   'Result_PD',
@@ -381,16 +395,13 @@ def reorder_columns(df, desired_order):
 
 # ================== Build Report ==================
 def build_report(df_sap, df_infor_raw):
-    # SAP
     df_sap2 = load_sap(df_sap)
     df_sap2["PO No.(Full)"] = df_sap2["PO No.(Full)"].apply(normalize_po)
 
-    # Infor (PO level)
     df_infor = process_infor_po_level(df_infor_raw)
     if df_infor.empty:
         return pd.DataFrame()
 
-    # Merge
     df_merged = df_sap2.merge(df_infor, how="left", left_on="PO No.(Full)", right_on="Order #")
 
     df_merged = fill_missing_dates(df_merged)
@@ -587,7 +598,8 @@ with tab1:
                             result_cols = [
                                 "Result_Quantity", "Result_FPD", "Result_LPD", "Result_CRD",
                                 "Result_PSDD", "Result_PODD", "Result_PD",
-                                "Result_Market PO",  # <= kolom baru
+                                "Result_Market PO",
+                                "Result_Shipment Method",
                             ]
                             result_selections = {}
                             for col in result_cols:
@@ -664,15 +676,17 @@ with tab1:
                             st.subheader("📊 Comparison Summary (TRUE vs FALSE)")
                             existing_results = [
                                 c for c in [
-                                    "Result_Quantity", "Result_FPD", "Result_LPD", "Result_CRD",
+                                    "Result_Quantity",
+                                    "Result_Market PO",
+                                    "Result_Shipment Method",  # ← baru
+                                    "Result_FPD", "Result_LPD", "Result_CRD",
                                     "Result_PSDD", "Result_PODD", "Result_PD",
-                                    "Result_Market PO",  # <= kolom baru
                                 ] if c in df_view.columns
                             ]
                             if existing_results:
-                                true_counts  = [int(df_view[c].eq("TRUE").sum())               for c in existing_results]
-                                false_counts = [int(df_view[c].eq("FALSE").sum())              for c in existing_results]
-                                totals       = [int(df_view[c].isin(["TRUE","FALSE"]).sum())   for c in existing_results]
+                                true_counts  = [int(df_view[c].eq("TRUE").sum())             for c in existing_results]
+                                false_counts = [int(df_view[c].eq("FALSE").sum())            for c in existing_results]
+                                totals       = [int(df_view[c].isin(["TRUE","FALSE"]).sum()) for c in existing_results]
                                 acc          = [(t / tot * 100.0) if tot > 0 else 0.0 for t, tot in zip(true_counts, totals)]
 
                                 summary_df = pd.DataFrame({
