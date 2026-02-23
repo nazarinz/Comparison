@@ -41,13 +41,22 @@ INFOR_COLUMNS_FIXED = [
     "Infor Market PO Number",
 ]
 
-DELAY_EMPTY_COLUMNS = [
+# Kolom yang nilainya di-blank saat export (NaN, 0, "NAN", dll.)
+BLANK_ON_EXPORT_COLUMNS = [
+    # Delay / confirmation columns
     "Delay/Early - Confirmation CRD",
     "Infor Delay/Early - Confirmation CRD",
     "Result_Delay_CRD",
     "Delay - PO PSDD Update",
     "Infor Delay - PO PSDD Update",
+    "Delay - PO PD Update",           # ← diperluas
+    "Infor Delay - PO PD Update",     # ← diperluas
+    # Shipment Method SAP (sering kosong)
+    "Shipment Method",                 # ← diperluas
 ]
+
+# Nilai "kosong" yang akan di-blank pada kolom string non-Result
+_NAN_STRINGS = {"NAN", "NaN", "nan", "NULL", "null", "None", "NONE", "--", "N/A", "NAT", "NAT"}
 
 DATE_COLUMNS_PREF = [
     "Document Date","FPD","LPD","CRD","PSDD","FCR Date","PODD","PD","PO Date","Actual PGI",
@@ -55,25 +64,21 @@ DATE_COLUMNS_PREF = [
 ]
 
 # ================== Country Name Normalization ==================
-# Key = nilai SAP (uppercase), Value = nilai Infor (uppercase)
 COUNTRY_NAME_MAP = {
     # Americas
     "USA":                          "UNITED STATES",
     "U.S.A.":                       "UNITED STATES",
     "US":                           "UNITED STATES",
     "UNITED STATES OF AMERICA":     "UNITED STATES",
-
     # Middle East
     "UTD.ARAB EMIR.":               "UNITED ARAB EMIRATES",
     "U.A.E.":                       "UNITED ARAB EMIRATES",
     "UAE":                          "UNITED ARAB EMIRATES",
-
     # Asia — Korea
     "SOUTH KOREA":                  "KOREA",
     "REPUBLIC OF KOREA":            "KOREA",
     "KOREA, REPUBLIC OF":           "KOREA",
     "KOREA, SOUTH":                 "KOREA",
-
     # Asia — China / HK / TW / Macau
     "HONG KONG-CHINA":              "CHINA",
     "HONG KONG":                    "CHINA",
@@ -86,34 +91,27 @@ COUNTRY_NAME_MAP = {
     "P.R. CHINA":                   "CHINA",
     "MACAU":                        "CHINA",
     "MACAO":                        "CHINA",
-
     # Asia — Others
     "VIET NAM":                     "VIETNAM",
     "VIET NAM, SOC. REP.":          "VIETNAM",
     "PHILIPPINEN":                  "PHILIPPINES",
     "PHILLIPINES":                  "PHILIPPINES",
-
     # Europe / Türkiye
     "TURKEY":                       "TURKIYE",
     "TÜRKIYE":                      "TURKIYE",
     "TURKEI":                       "TURKIYE",
-
     # Europe — Others
     "GREAT BRITAIN":                "UNITED KINGDOM",
     "UK":                           "UNITED KINGDOM",
     "ENGLAND":                      "UNITED KINGDOM",
     "CZECH REPUBLIC":               "CZECHIA",
     "CZECH REP.":                   "CZECHIA",
-
     # Middle East — Others
     "SAUDI-ARABIA":                 "SAUDI ARABIA",
     "SAUDI ARABIEN":                "SAUDI ARABIA",
-
-    # Add more as needed — key=SAP uppercase, value=Infor uppercase
 }
 
 def normalize_country(x):
-    """Normalisasi nama negara SAP → format Infor. Return uppercase original jika tidak ada di mapping."""
     if pd.isna(x):
         return ""
     s = str(x).strip().upper()
@@ -187,7 +185,6 @@ def load_infor_from_many_csv(csv_dfs):
     return pd.concat(data_list, ignore_index=True)
 
 def normalize_po(x):
-    """Normalize PO number: strip non-digit, zero-pad ke 10 digit."""
     if pd.isna(x):
         return ""
     s = str(x).strip()
@@ -201,11 +198,6 @@ def normalize_po(x):
     return digits.zfill(10)
 
 def normalize_market_po(x):
-    """
-    Zero-pad Market PO Number ke 10 digit.
-    FIX: handle float string seperti '304821089.0' → int dulu → '304821089' → zfill → '0304821089'
-    Return '' jika kosong.
-    """
     if pd.isna(x):
         return ""
     s = str(x).strip()
@@ -224,11 +216,6 @@ def normalize_market_po(x):
 
 # ================== Proses Infor PO Level ==================
 def process_infor_po_level(df_all):
-    """
-    PO-level aggregation:
-    - Infor Quantity = SUM semua size (1 PO = 1 baris)
-    - Market PO Number diambil & di-rename ke Infor Market PO Number
-    """
     df_all = df_all.copy()
     df_all.columns = df_all.columns.str.strip()
 
@@ -349,12 +336,11 @@ def clean_and_compare(df_merged):
             )
 
     # Kolom string biasa — upper + strip
-    # Ship-to Country SAP dipisah → pakai normalize_country (mapping ke format Infor)
     string_cols = [
         "Model Name", "Infor Model Name",
         "Article No", "Infor Article No",
         "Classification Code", "Infor Classification Code",
-        "Infor Ship-to Country",                              # ← Infor: upper saja
+        "Infor Ship-to Country",
         "Ship-to-Sort1", "Infor GPS Country",
         "Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD",
         "Delay - PO PSDD Update", "Infor Delay - PO PSDD Update",
@@ -365,7 +351,7 @@ def clean_and_compare(df_merged):
         if col in df_merged.columns:
             df_merged[col] = df_merged[col].astype(str).str.strip().str.upper()
 
-    # ← Normalisasi khusus: Ship-to Country SAP → format Infor (via COUNTRY_NAME_MAP)
+    # Normalisasi Ship-to Country SAP → format Infor
     if "Ship-to Country" in df_merged.columns:
         df_merged["Ship-to Country"] = df_merged["Ship-to Country"].apply(normalize_country)
 
@@ -378,16 +364,37 @@ def clean_and_compare(df_merged):
             df_merged["Infor GPS Country"].astype(str).str.replace(".0", "", regex=False)
         )
 
-    # Normalisasi Market PO Number (fix float string → int string → zfill 10)
+    # Normalisasi Market PO Number
     if "Cust Ord No" in df_merged.columns:
         df_merged["Cust Ord No"] = df_merged["Cust Ord No"].apply(normalize_market_po)
     if "Infor Market PO Number" in df_merged.columns:
         df_merged["Infor Market PO Number"] = df_merged["Infor Market PO Number"].apply(normalize_market_po)
 
+    # ── Bersihkan NAN string di semua kolom string non-Result ──────────────
+    # Kolom yang string "NAN"/"NULL"/dll. harus menjadi "" (kosong)
+    nan_clean_cols = [
+        "Shipment Method", "Infor Shipment Method",
+        "Delay - PO PSDD Update", "Infor Delay - PO PSDD Update",
+        "Delay - PO PD Update", "Infor Delay - PO PD Update",
+        "Delay/Early - Confirmation CRD", "Infor Delay/Early - Confirmation CRD",
+        "Ship-to Country", "Infor Ship-to Country",
+        "Ship-to-Sort1", "Infor GPS Country",
+        "Model Name", "Infor Model Name",
+        "Article No", "Infor Article No",
+        "Classification Code", "Infor Classification Code",
+        "Cust Ord No", "Infor Market PO Number",
+    ]
+    for col in nan_clean_cols:
+        if col in df_merged.columns:
+            df_merged[col] = df_merged[col].replace(
+                list(_NAN_STRINGS), ""
+            )
+
     def safe_result(c1, c2):
+        """Compare dua kolom. Jika kolom tidak ada, return '' (bukan 'COLUMN MISSING')."""
         if c1 in df_merged.columns and c2 in df_merged.columns:
             return np.where(df_merged[c1] == df_merged[c2], "TRUE", "FALSE")
-        return ["COLUMN MISSING"] * len(df_merged)
+        return [""] * len(df_merged)  # ← "" bukan "COLUMN MISSING"
 
     df_merged["Result_Quantity"]            = safe_result("Quantity",                        "Infor Quantity")
     df_merged["Result_Model Name"]          = safe_result("Model Name",                      "Infor Model Name")
@@ -407,6 +414,18 @@ def clean_and_compare(df_merged):
     df_merged["Result_PD"]                  = safe_result("PD",                              "Infor PD")
     df_merged["Result_Market PO"]           = safe_result("Cust Ord No",                     "Infor Market PO Number")
     df_merged["Result_Shipment Method"]     = safe_result("Shipment Method",                 "Infor Shipment Method")
+
+    # Result yang keduanya "" (sama-sama kosong) → kosongin Result-nya juga
+    for res_col, c1, c2 in [
+        ("Result_Shipment Method", "Shipment Method", "Infor Shipment Method"),
+        ("Result_Delay_PSDD",      "Delay - PO PSDD Update",           "Infor Delay - PO PSDD Update"),
+        ("Result_Delay_PD",        "Delay - PO PD Update",             "Infor Delay - PO PD Update"),
+        ("Result_Delay_CRD",       "Delay/Early - Confirmation CRD",   "Infor Delay/Early - Confirmation CRD"),
+    ]:
+        if res_col in df_merged.columns and c1 in df_merged.columns and c2 in df_merged.columns:
+            both_empty = (df_merged[c1].astype(str).str.strip() == "") & \
+                         (df_merged[c2].astype(str).str.strip() == "")
+            df_merged.loc[both_empty, res_col] = ""
 
     return df_merged
 
@@ -480,15 +499,18 @@ def build_report(df_sap, df_infor_raw):
     return reorder_columns(df_final, DESIRED_ORDER)
 
 # ================== Export Helpers ==================
-def _blank_delay_columns(df):
+def _blank_export_columns(df):
+    """Blank nilai NaN/0/'NAN'/dll. pada kolom yang ditentukan di BLANK_ON_EXPORT_COLUMNS."""
     out = df.copy()
-    for col in DELAY_EMPTY_COLUMNS:
+    blank_vals = {
+        np.nan: "", pd.NA: "", None: "",
+        "NaN": "", "NAN": "", "nan": "", "NULL": "", "null": "",
+        "--": "", "N/A": "", "NAT": "",
+        0: "", 0.0: "", "0": "",
+    }
+    for col in BLANK_ON_EXPORT_COLUMNS:
         if col in out.columns:
-            out[col] = out[col].replace({
-                np.nan: "", pd.NA: "", None: "",
-                "NaN": "", "NAN": "", "NULL": "", "--": "",
-                0: "", 0.0: "", "0": "",
-            })
+            out[col] = out[col].replace(blank_vals)
     return out
 
 def _export_excel_styled(df, sheet_name="Report"):
@@ -652,7 +674,6 @@ with tab1:
                     else:
                         _status_update(status, label="Report siap! ✅", state="complete")
 
-                        # ── Expander: Country Mapping Info ──────────────────────
                         with st.expander("🗺️ Country Normalization Map (SAP → Infor)", expanded=False):
                             map_df = pd.DataFrame(
                                 list(COUNTRY_NAME_MAP.items()),
@@ -795,7 +816,7 @@ with tab1:
                             # Download
                             out_name_xlsx = f"PGD Comparison Tracking Report - {today_str_id()}.xlsx"
                             out_name_csv  = f"PGD Comparison Tracking Report - {today_str_id()}.csv"
-                            df_export     = _blank_delay_columns(df_view)
+                            df_export     = _blank_export_columns(df_view)
 
                             st.download_button(
                                 label="⬇️ Download CSV (Filtered)",
@@ -973,7 +994,6 @@ with tab3:
             ]:
                 df = apply_multi(df, col, vals)
 
-            # Metrics
             st.subheader("📊 Key Metrics")
             df["__Value__"] = (
                 pd.to_numeric(df.get("Unit Price", 0), errors="coerce").fillna(0.0) *
@@ -990,7 +1010,6 @@ with tab3:
             c3.metric("Total Value",    f"${total_value:,.0f}")
             c4.metric("Avg Unit Price", f"${avg_up:,.2f}")
 
-            # Tren Bulanan
             st.subheader("📈 Tren Bulanan")
             if df[date_axis_col].notna().any():
                 df["_Month"] = df[date_axis_col].dt.to_period("M").dt.to_timestamp()
@@ -1022,7 +1041,6 @@ with tab3:
                 else:
                     st.info("Kolom 'Model Name' tidak ada.")
 
-            # Delay Code
             st.subheader("⏱️ Distribusi Delay Code (SAP)")
             cols_delay = [
                 c for c in ["Delay/Early - Confirmation CRD", "Delay - PO PSDD Update", "Delay - PO PD Update"]
@@ -1044,7 +1062,6 @@ with tab3:
             else:
                 st.info("Kolom delay SAP tidak ditemukan.")
 
-            # Download
             st.subheader("⬇️ Download Dataset (Filtered)")
             st.download_button(
                 "Download CSV",
