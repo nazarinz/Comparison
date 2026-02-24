@@ -83,8 +83,6 @@ COUNTRY_NAME_MAP = {
     "HONG KONG-CHINA":              "CHINA",
     "HONG KONG":                    "CHINA",
     "HK":                           "CHINA",
-    "TAIWAN":                       "CHINA",
-    "TAIWAN-CHINA":                 "CHINA",
     "PEOPLES REP. OF CHINA":        "CHINA",
     "CHINA, PEOPLES REP.":          "CHINA",
     "PEOPLE'S REPUBLIC OF CHINA":   "CHINA",
